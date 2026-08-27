@@ -14,6 +14,9 @@ export type TProductImage = z.infer<typeof ProductImageSchema>;
 export const ProductImagesSchema = z.array(ProductImageSchema);
 export type TProductImages = z.infer<typeof ProductImagesSchema>;
 
+export const ProductSlugSchema = z.string().trim().min(1, "Product slug is required");
+export type TProductSlug = z.infer<typeof ProductSlugSchema>;
+
 export const ProductModelSchema = createSelectSchema(productsTable);
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 

@@ -1,4 +1,4 @@
-import { AdminProductsListSchema, ProductsListSchema, type TAdminProductQuery, type TAdminProductsList, type TPaginationMeta, type TProductQuery, type TProductsList, type TCreateProductOutput, type TProductModel, type TUpdateProductOutput } from "./types";
+import { AdminProductsListSchema, GetProductPublicSchema, GetProductSchema, ProductsListSchema, type TAdminProductQuery, type TAdminProductsList, type TPaginationMeta, type TProductQuery, type TProductsList, type TCreateProductOutput, type TGetProduct, type TGetProductPublic, type TProductModel, type TProductSlug, type TUpdateProductOutput } from "./types";
 import { NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { productsTable } from "@/lib/drizzle/schemas/public";
@@ -42,6 +42,36 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     return ProductsListSchema.parse({ data: products, meta });
 };
 
+const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> => {
+    const product = await db.query.productsTable.findFirst({
+        where: (product, { eq, and }) => {
+            return and(eq(product.slug, slug), eq(product.isActive, true));
+        },
+        columns: {
+            purchasePrice: false,
+            isActive: false,
+            createdAt: false,
+            updatedAt: false,
+        }
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+    return GetProductPublicSchema.parse(product);
+};
+
+const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> => {
+    const product = await db.query.productsTable.findFirst({
+        where: (product, { eq }) => {
+            return eq(product.slug, slug);
+        },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+    return GetProductSchema.parse(product);
+};
+
 const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProductsList> => {
     const conditions = buildProductConditions(query, "admin");
     const orderBy = buildProductOrderBy(query.sortBy, query.sortOrder);
@@ -66,16 +96,16 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
     return product;
 };
 
-const updateProduct = async (id: TUpdateProductOutput["id"], data: TUpdateProductOutput["data"]): Promise<TProductModel> => {
+const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutput["data"]): Promise<TProductModel> => {
     const existingProduct = await db.query.productsTable.findFirst({
         where: (product, { eq }) => {
-            return eq(product.id, id);
+            return eq(product.slug, slug);
         },
     });
     if (existingProduct) {
         const [product] = await db.update(productsTable)
             .set(data)
-            .where(eq(productsTable.id, id))
+            .where(eq(productsTable.slug, slug))
             .returning();
 
         return product;
@@ -85,9 +115,11 @@ const updateProduct = async (id: TUpdateProductOutput["id"], data: TUpdateProduc
 
 const productsActions = {
     getProducts,
+    getProductBySlug,
     getAdminProducts,
+    getAdminProductBySlug,
     createProduct,
-    updateProduct,
+    updateProductBySlug,
 };
 
 export default productsActions;
