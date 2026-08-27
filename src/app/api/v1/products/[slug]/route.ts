@@ -34,3 +34,18 @@ export const PATCH = async (
         return handleError(err);
     }
 };
+
+export const DELETE = async (
+    request: Request,
+    { params }: { params: Promise<{ slug: string }> }
+) => {
+    try {
+        const { slug } = await params;
+        await requireAdmin(request.headers);
+        const parsedSlug = ProductSlugSchema.parse(slug);
+        const product = await productsActions.deleteProductBySlug(parsedSlug);
+        return ok(product);
+    } catch (err) {
+        return handleError(err);
+    }
+};

@@ -113,6 +113,17 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
     throw new NotFoundError("Product not found");
 };
 
+const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
+    const [product] = await db.delete(productsTable)
+        .where(eq(productsTable.slug, slug))
+        .returning();
+
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+    return product;
+};
+
 const productsActions = {
     getProducts,
     getProductBySlug,
@@ -120,6 +131,7 @@ const productsActions = {
     getAdminProductBySlug,
     createProduct,
     updateProductBySlug,
+    deleteProductBySlug,
 };
 
 export default productsActions;
