@@ -66,7 +66,8 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     slug: z.string()
         .trim()
         .min(1, "Product slug is required")
-        .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug must be URL-friendly"), // TODO: Can't put spaces, capital letters or bangla characters, need to find a way to convert them to URL-friendly format
+        .max(120, "Product slug cannot exceed 120 characters")
+        .optional(),
     featuredImageUrl: z.url().trim().min(1, "Featured image URL is required"),
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
@@ -77,7 +78,6 @@ export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
 
 
 export const UpdateProductSchema = z.object({
-    id: ProductModelSchema.shape.id,
     data: CreateProductSchema.partial()
 });
 export type TUpdateProductInput = z.input<typeof UpdateProductSchema>;

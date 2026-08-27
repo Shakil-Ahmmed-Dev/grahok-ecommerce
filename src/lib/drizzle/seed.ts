@@ -1,4 +1,5 @@
 import { CreateProductSchema, type TCreateProductInput } from "@/features/products/types";
+import { slugify } from "@/lib/slug";
 import { db } from "./index";
 import { productsTable } from "./schemas/public";
 
@@ -150,7 +151,10 @@ const dummyProducts: TCreateProductInput[] = [
 
 const parsedDummyProducts = dummyProducts.map((product) => {
     const parsedProduct = CreateProductSchema.parse(product);
-    return parsedProduct;
+    return {
+        ...parsedProduct,
+        slug: slugify(parsedProduct.slug ?? parsedProduct.name),
+    };
 });
 
 const existingProducts = await db.query.productsTable.findMany();
