@@ -1,0 +1,1 @@
+ALTER TABLE "products" ALTER COLUMN "isActive" SET NOT NULL;
