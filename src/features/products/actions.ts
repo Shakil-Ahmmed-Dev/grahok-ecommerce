@@ -1,44 +1,64 @@
-import { GetProductsPublicSchema, GetProductsSchema, type TCreateProductOutput, type TGetProducts, type TGetProductsPublic, type TProductModel, type TUpdateProductOutput } from "./types";
+import { AdminProductsListSchema, ProductsListSchema, type TAdminProductQuery, type TAdminProductsList, type TPaginationMeta, type TProductQuery, type TProductsList, type TCreateProductOutput, type TProductModel, type TUpdateProductOutput } from "./types";
 import { NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import { eq } from "drizzle-orm";
+import { buildProductConditions, buildProductOrderBy } from "./query";
 
-const getProducts = async (pagination: {
-    page: number;
-    pageSize: number;
-}): Promise<TGetProductsPublic> => {
-    const products = await db.query.productsTable.findMany({
-        where: (product, { eq }) => {
-            return eq(product.isActive, true);
-        },
-        orderBy: (product, { desc }) => {
-            return [desc(product.createdAt)];
-        },
-        offset: (pagination.page - 1) * pagination.pageSize,
-        limit: pagination.pageSize,
-        columns: {
-            purchasePrice: false,
-            isActive: false,
-            createdAt: false,
-            updatedAt: false,
-        }
-    });
-    return GetProductsPublicSchema.parse(products);
+const buildPaginationMeta = (total: number, page: number, pageSize: number): TPaginationMeta => {
+    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+    return {
+        page,
+        pageSize,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+    };
 };
 
-const getAdminProducts = async (pagination: {
-    page: number;
-    pageSize: number;
-}): Promise<TGetProducts> => {
-    const products = await db.query.productsTable.findMany({
-        orderBy: (product, { desc }) => {
-            return [desc(product.createdAt)];
-        },
-        offset: (pagination.page - 1) * pagination.pageSize,
-        limit: pagination.pageSize,
-    });
-    return GetProductsSchema.parse(products);
+const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
+    const conditions = buildProductConditions(query, "public");
+    const orderBy = buildProductOrderBy(query.sortBy, query.sortOrder);
+    const offset = (query.page - 1) * query.pageSize;
+
+    const [products, total] = await Promise.all([
+        db.query.productsTable.findMany({
+            where: conditions,
+            orderBy,
+            offset,
+            limit: query.pageSize,
+            columns: {
+                purchasePrice: false,
+                isActive: false,
+                createdAt: false,
+                updatedAt: false,
+            }
+        }),
+        db.$count(productsTable, conditions),
+    ]);
+
+    const meta = buildPaginationMeta(total, query.page, query.pageSize);
+    return ProductsListSchema.parse({ data: products, meta });
+};
+
+const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProductsList> => {
+    const conditions = buildProductConditions(query, "admin");
+    const orderBy = buildProductOrderBy(query.sortBy, query.sortOrder);
+    const offset = (query.page - 1) * query.pageSize;
+
+    const [products, total] = await Promise.all([
+        db.query.productsTable.findMany({
+            where: conditions,
+            orderBy,
+            offset,
+            limit: query.pageSize,
+        }),
+        db.$count(productsTable, conditions),
+    ]);
+
+    const meta = buildPaginationMeta(total, query.page, query.pageSize);
+    return AdminProductsListSchema.parse({ data: products, meta });
 };
 
 const createProduct = async (data: TCreateProductOutput): Promise<TProductModel> => {

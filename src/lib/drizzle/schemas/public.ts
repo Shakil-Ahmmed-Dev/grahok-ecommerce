@@ -1,6 +1,6 @@
 import type { TProductImages, TProductTags } from "@/features/products/types";
 import { randomUUID } from "crypto";
-import { boolean, jsonb, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const productsTable = pgTable("products", {
     id: uuid().primaryKey().$default(randomUUID),
@@ -25,4 +25,9 @@ export const productsTable = pgTable("products", {
     updatedAt: timestamp().defaultNow()
         .$onUpdate(() => /* @__PURE__ */ new Date())
         .notNull(),
-});
+}, (table) => [
+    index("products_is_active_created_at_idx").on(table.isActive, table.createdAt),
+    index("products_category_idx").on(table.category),
+    index("products_subcategory_idx").on(table.subcategory),
+    index("products_sell_price_idx").on(table.sellPrice),
+]);

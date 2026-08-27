@@ -34,6 +34,28 @@ export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
 export const GetProductsPublicSchema = GetProductPublicSchema.array();
 export type TGetProductsPublic = z.infer<typeof GetProductsPublicSchema>;
 
+export const PaginationMetaSchema = z.object({
+    page: z.number().int().positive(),
+    pageSize: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+    totalPages: z.number().int().nonnegative(),
+    hasNextPage: z.boolean(),
+    hasPrevPage: z.boolean(),
+});
+export type TPaginationMeta = z.infer<typeof PaginationMetaSchema>;
+
+export const ProductsListSchema = z.object({
+    data: GetProductsPublicSchema,
+    meta: PaginationMetaSchema,
+});
+export type TProductsList = z.infer<typeof ProductsListSchema>;
+
+export const AdminProductsListSchema = z.object({
+    data: GetProductsSchema,
+    meta: PaginationMetaSchema,
+});
+export type TAdminProductsList = z.infer<typeof AdminProductsListSchema>;
+
 export const CreateProductSchema = createInsertSchema(productsTable, {
     name: z.string()
         .trim()
@@ -63,3 +85,36 @@ export const ProductPaginationSchema = z.object({
     pageSize: z.coerce.number<string>().int().positive("Limit must be a positive integer").max(100, "Limit cannot exceed 100").default(10),
 });
 export type TProductPagination = z.infer<typeof ProductPaginationSchema>;
+
+export const QueryBooleanSchema = z
+    .enum(["true", "false", "1", "0"])
+    .transform((value) => value === "true" || value === "1");
+
+export const ProductSortSchema = z.object({
+    sortBy: z.enum(["createdAt", "sellPrice", "name"]).default("createdAt"),
+    sortOrder: z.enum(["asc", "desc"]).default("desc"),
+});
+export type TProductSort = z.infer<typeof ProductSortSchema>;
+
+export const ProductFilterSchema = z.object({
+    search: z.string().trim().min(1).max(100).optional(),
+    category: z.string().trim().min(1).max(100).optional(),
+    subcategory: z.string().trim().min(1).max(100).optional(),
+    tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+    minPrice: z.coerce.number<string>().nonnegative("Minimum price must be a non-negative number").optional(),
+    maxPrice: z.coerce.number<string>().nonnegative("Maximum price must be a non-negative number").optional(),
+    inStock: QueryBooleanSchema.optional(),
+});
+export type TProductFilter = z.infer<typeof ProductFilterSchema>;
+
+export const ProductQuerySchema = ProductPaginationSchema
+    .merge(ProductSortSchema)
+    .merge(ProductFilterSchema);
+export type TProductQueryInput = z.input<typeof ProductQuerySchema>;
+export type TProductQuery = z.output<typeof ProductQuerySchema>;
+
+export const AdminProductQuerySchema = ProductQuerySchema.extend({
+    isActive: QueryBooleanSchema.optional(),
+});
+export type TAdminProductQueryInput = z.input<typeof AdminProductQuerySchema>;
+export type TAdminProductQuery = z.output<typeof AdminProductQuerySchema>;
