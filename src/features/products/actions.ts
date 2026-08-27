@@ -1,5 +1,5 @@
 import { AdminProductsListSchema, GetProductPublicSchema, GetProductSchema, ProductsListSchema, type TAdminProductQuery, type TAdminProductsList, type TPaginationMeta, type TProductQuery, type TProductsList, type TCreateProductOutput, type TGetProduct, type TGetProductPublic, type TProductModel, type TProductSlug, type TUpdateProductOutput } from "./types";
-import { NotFoundError } from "@/lib/error";
+import { ConflictError, NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import { eq } from "drizzle-orm";
@@ -92,6 +92,15 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
 };
 
 const createProduct = async (data: TCreateProductOutput): Promise<TProductModel> => {
+    const existingProduct = await db.query.productsTable.findFirst({
+        where: (product, { eq }) => {
+            return eq(product.slug, data.slug);
+        },
+    });
+    if (existingProduct) {
+        throw new ConflictError("A product with this slug already exists");
+    }
+
     const [product] = await db.insert(productsTable).values(data).returning();
     return product;
 };
@@ -103,6 +112,18 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
         },
     });
     if (existingProduct) {
+        if (data.slug && data.slug !== slug) {
+            const newSlug = data.slug;
+            const slugTaken = await db.query.productsTable.findFirst({
+                where: (product, { eq, and, ne }) => {
+                    return and(eq(product.slug, newSlug), ne(product.id, existingProduct.id));
+                },
+            });
+            if (slugTaken) {
+                throw new ConflictError("A product with this slug already exists");
+            }
+        }
+
         const [product] = await db.update(productsTable)
             .set(data)
             .where(eq(productsTable.slug, slug))

@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/error";
+import { isNeonDbError, mapPostgresError } from "@/lib/error/postgres";
 import { logger } from "@/lib/pino/logger";
 import { ZodError, treeifyError } from "zod";
 
@@ -24,6 +25,21 @@ export const handleError = (err: unknown): Response => {
 
     if (err instanceof ZodError) {
         return errorResponse("Validation failed", 400, treeifyError(err));
+    }
+
+    if (isNeonDbError(err)) {
+        const mapped = mapPostgresError(err);
+
+        if (mapped) {
+            const details =
+                err.constraint || err.column
+                    ? {
+                        ...(err.constraint ? { constraint: err.constraint } : {}),
+                        ...(err.column ? { column: err.column } : {}),
+                    }
+                    : undefined;
+            return errorResponse(mapped.message, mapped.statusCode, details);
+        }
     }
 
     // Unexpected errors
