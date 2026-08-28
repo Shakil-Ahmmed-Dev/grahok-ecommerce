@@ -4,8 +4,6 @@ import { CreateProductSchema, ProductQuerySchema } from "@/features/products/typ
 import { parseProductQuery } from "@/features/products/query";
 import { created, handleError, ok } from "@/lib/http";
 
-export const runtime = "nodejs";
-
 export const GET = async (request: Request) => {
     try {
         const url = new URL(request.url);

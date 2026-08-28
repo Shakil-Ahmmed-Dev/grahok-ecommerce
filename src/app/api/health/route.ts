@@ -1,7 +1,5 @@
 import { ok } from "@/lib/http";
 
-export const runtime = "nodejs";
-
 export const GET = () =>
     ok({
         status: "ok",

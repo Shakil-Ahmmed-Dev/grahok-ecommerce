@@ -3,8 +3,6 @@ import { requireAdmin } from "@/features/auth/middlewares";
 import { ProductSlugSchema, UpdateProductSchema } from "@/features/products/types";
 import { handleError, ok } from "@/lib/http";
 
-export const runtime = "nodejs";
-
 export const GET = async (
     _request: Request,
     { params }: { params: Promise<{ slug: string }> }

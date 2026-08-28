@@ -4,8 +4,6 @@ import { AdminProductQuerySchema } from "@/features/products/types";
 import { parseProductQuery } from "@/features/products/query";
 import { handleError, ok } from "@/lib/http";
 
-export const runtime = "nodejs";
-
 export const GET = async (request: Request) => {
     try {
         await requireAdmin(request.headers);
