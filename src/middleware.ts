@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRateLimitTier } from "@/lib/rate-limit/config";
 import { checkRateLimit } from "@/lib/rate-limit/rate-limiter";
+import { applySecurityHeaders } from "@/lib/security/headers";
 
 export const middleware = async (request: NextRequest) => {
     // Determine client IP safely
@@ -16,6 +17,15 @@ export const middleware = async (request: NextRequest) => {
     const result = await checkRateLimit(key, tier.limit, tier.windowSeconds);
 
     if (!result.success) {
+        const headers = new Headers({
+            "Content-Type": "application/json",
+            "Retry-After": result.retryAfter.toString(),
+            "X-RateLimit-Limit": result.limit.toString(),
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": result.reset.toString(),
+        });
+        applySecurityHeaders(headers);
+
         return new NextResponse(
             JSON.stringify({
                 success: false,
@@ -26,13 +36,7 @@ export const middleware = async (request: NextRequest) => {
             }),
             {
                 status: 429,
-                headers: {
-                    "Content-Type": "application/json",
-                    "Retry-After": result.retryAfter.toString(),
-                    "X-RateLimit-Limit": result.limit.toString(),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": result.reset.toString(),
-                },
+                headers,
             }
         );
     }
@@ -41,6 +45,7 @@ export const middleware = async (request: NextRequest) => {
     response.headers.set("X-RateLimit-Limit", result.limit.toString());
     response.headers.set("X-RateLimit-Remaining", result.remaining.toString());
     response.headers.set("X-RateLimit-Reset", result.reset.toString());
+    applySecurityHeaders(response.headers);
 
     return response;
 };
