@@ -32,4 +32,5 @@ export const productsTable = pgTable("products", {
     index("products_subcategory_idx").on(table.subcategory),
     index("products_sell_price_idx").on(table.sellPrice),
     index("products_deleted_at_idx").on(table.deletedAt),
+    index("products_tags_idx").using("gin", table.tags),
 ]);
