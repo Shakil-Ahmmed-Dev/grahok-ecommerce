@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, ilike, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, ilike, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import z from "zod";
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import type { TProductSort } from "./types";
@@ -12,6 +12,7 @@ export interface TProductFilterFields {
     maxPrice?: number;
     inStock?: boolean;
     isActive?: boolean;
+    includeDeleted?: boolean;
 }
 
 export const buildProductConditions = (
@@ -22,8 +23,14 @@ export const buildProductConditions = (
 
     if (mode === "public") {
         conditions.push(eq(productsTable.isActive, true));
-    } else if (query.isActive !== undefined) {
-        conditions.push(eq(productsTable.isActive, query.isActive));
+        conditions.push(isNull(productsTable.deletedAt));
+    } else {
+        if (query.isActive !== undefined) {
+            conditions.push(eq(productsTable.isActive, query.isActive));
+        }
+        if (!query.includeDeleted) {
+            conditions.push(isNull(productsTable.deletedAt));
+        }
     }
 
     if (query.search) {

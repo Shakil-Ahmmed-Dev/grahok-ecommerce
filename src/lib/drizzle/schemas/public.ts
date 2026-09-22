@@ -25,9 +25,11 @@ export const productsTable = pgTable("products", {
     updatedAt: timestamp().defaultNow()
         .$onUpdate(() => /* @__PURE__ */ new Date())
         .notNull(),
+    deletedAt: timestamp(),
 }, (table) => [
     index("products_is_active_created_at_idx").on(table.isActive, table.createdAt),
     index("products_category_idx").on(table.category),
     index("products_subcategory_idx").on(table.subcategory),
     index("products_sell_price_idx").on(table.sellPrice),
+    index("products_deleted_at_idx").on(table.deletedAt),
 ]);

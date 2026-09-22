@@ -31,6 +31,7 @@ export const GetProductPublicSchema = ProductModelSchema.omit({
     isActive: true,
     createdAt: true,
     updatedAt: true,
+    deletedAt: true,
 });
 export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
 
@@ -72,7 +73,7 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
-});
+}).omit({ deletedAt: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
 
@@ -118,6 +119,7 @@ export type TProductQuery = z.output<typeof ProductQuerySchema>;
 
 export const AdminProductQuerySchema = ProductQuerySchema.extend({
     isActive: QueryBooleanSchema.optional(),
+    includeDeleted: QueryBooleanSchema.optional(),
 });
 export type TAdminProductQueryInput = z.input<typeof AdminProductQuerySchema>;
 export type TAdminProductQuery = z.output<typeof AdminProductQuerySchema>;

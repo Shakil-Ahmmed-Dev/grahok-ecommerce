@@ -36,6 +36,13 @@
       "when": 1787852292162,
       "tag": "0004_lowly_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790045048183,
+      "tag": "0005_amazing_may_parker",
+      "breakpoints": true
     }
   ]
 }

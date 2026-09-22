@@ -2,7 +2,7 @@ import { AdminProductsListSchema, GetProductPublicSchema, GetProductSchema, Prod
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { productsTable } from "@/lib/drizzle/schemas/public";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { buildProductConditions, buildProductOrderBy } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
 
@@ -34,6 +34,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
                 isActive: false,
                 createdAt: false,
                 updatedAt: false,
+                deletedAt: false,
             }
         }),
         db.$count(productsTable, conditions),
@@ -45,14 +46,19 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
 
 const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> => {
     const product = await db.query.productsTable.findFirst({
-        where: (product, { eq, and }) => {
-            return and(eq(product.slug, slug), eq(product.isActive, true));
+        where: (product, { eq, and, isNull }) => {
+            return and(
+                eq(product.slug, slug),
+                eq(product.isActive, true),
+                isNull(product.deletedAt)
+            );
         },
         columns: {
             purchasePrice: false,
             isActive: false,
             createdAt: false,
             updatedAt: false,
+            deletedAt: false,
         }
     });
     if (!product) {
@@ -131,8 +137,8 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
 
 const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutput["data"]): Promise<TProductModel> => {
     const existingProduct = await db.query.productsTable.findFirst({
-        where: (product, { eq }) => {
-            return eq(product.slug, slug);
+        where: (product, { eq, and, isNull }) => {
+            return and(eq(product.slug, slug), isNull(product.deletedAt));
         },
     });
     if (existingProduct) {
@@ -158,7 +164,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
 
         const [product] = await db.update(productsTable)
             .set(updateData)
-            .where(eq(productsTable.slug, slug))
+            .where(and(eq(productsTable.slug, slug), isNull(productsTable.deletedAt)))
             .returning();
 
         return product;
@@ -167,8 +173,21 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
 };
 
 const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
-    const [product] = await db.delete(productsTable)
-        .where(eq(productsTable.slug, slug))
+    const [product] = await db.update(productsTable)
+        .set({ deletedAt: new Date() })
+        .where(and(eq(productsTable.slug, slug), isNull(productsTable.deletedAt)))
+        .returning();
+
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+    return product;
+};
+
+const restoreProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
+    const [product] = await db.update(productsTable)
+        .set({ deletedAt: null })
+        .where(and(eq(productsTable.slug, slug), isNotNull(productsTable.deletedAt)))
         .returning();
 
     if (!product) {
@@ -185,6 +204,7 @@ const productsActions = {
     createProduct,
     updateProductBySlug,
     deleteProductBySlug,
+    restoreProductBySlug,
 };
 
 export default productsActions;
