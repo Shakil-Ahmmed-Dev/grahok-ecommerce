@@ -20,10 +20,12 @@ export type TProductSlug = z.infer<typeof ProductSlugSchema>;
 export const ProductModelSchema = createSelectSchema(productsTable);
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 
-export const GetProductSchema = ProductModelSchema;
+export const GetProductSchema = ProductModelSchema.omit({
+    searchVector: true,
+});
 export type TGetProduct = z.infer<typeof GetProductSchema>;
 
-export const GetProductsSchema = ProductModelSchema.array();
+export const GetProductsSchema = GetProductSchema.array();
 export type TGetProducts = z.infer<typeof GetProductsSchema>;
 
 export const GetProductPublicSchema = ProductModelSchema.omit({
@@ -32,6 +34,7 @@ export const GetProductPublicSchema = ProductModelSchema.omit({
     createdAt: true,
     updatedAt: true,
     deletedAt: true,
+    searchVector: true,
 });
 export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
 
@@ -73,7 +76,7 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
-}).omit({ deletedAt: true });
+}).omit({ deletedAt: true, searchVector: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
 
@@ -95,7 +98,7 @@ export const QueryBooleanSchema = z
     .transform((value) => value === "true" || value === "1");
 
 export const ProductSortSchema = z.object({
-    sortBy: z.enum(["createdAt", "sellPrice", "name"]).default("createdAt"),
+    sortBy: z.enum(["createdAt", "sellPrice", "name", "relevance"]).optional(),
     sortOrder: z.enum(["asc", "desc"]).default("desc"),
 });
 export type TProductSort = z.infer<typeof ProductSortSchema>;

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, ilike, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import z from "zod";
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import type { TProductSort } from "./types";
@@ -15,9 +15,38 @@ export interface TProductFilterFields {
     includeDeleted?: boolean;
 }
 
+export const buildProductSearchQuery = (search: string | undefined): SQL | null => {
+    if (!search) {
+        return null;
+    }
+    const trimmed = search.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const hasAdvancedSyntax = /["|-]|\bOR\b/.test(trimmed);
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    const isPlainWords = !hasAdvancedSyntax && words.length > 0 && words.every((w) => /^[a-zA-Z0-9]+$/.test(w));
+
+    if (isPlainWords) {
+        const prefixTerms = words.map((w) => `${w}:*`).join(" & ");
+        return sql`(websearch_to_tsquery('english', ${trimmed}) || to_tsquery('english', ${prefixTerms}))`;
+    }
+
+    return sql`websearch_to_tsquery('english', ${trimmed})`;
+};
+
+export const resolveProductSort = (query: {
+    search?: string;
+    sortBy?: TProductSort["sortBy"];
+}): NonNullable<TProductSort["sortBy"]> => {
+    return query.sortBy ?? (query.search?.trim() ? "relevance" : "createdAt");
+};
+
 export const buildProductConditions = (
     query: TProductFilterFields,
     mode: "public" | "admin",
+    searchQuery?: SQL | null,
 ): SQL | undefined => {
     const conditions: SQL[] = [];
 
@@ -33,11 +62,8 @@ export const buildProductConditions = (
         }
     }
 
-    if (query.search) {
-        conditions.push(or(
-            ilike(productsTable.name, `%${query.search}%`),
-            ilike(productsTable.slug, `%${query.search}%`),
-        ) as SQL);
+    if (searchQuery) {
+        conditions.push(sql`${productsTable.searchVector} @@ ${searchQuery}`);
     }
 
     if (query.category) {
@@ -68,12 +94,18 @@ export const buildProductConditions = (
 };
 
 export const buildProductOrderBy = (
-    sortBy: TProductSort["sortBy"],
+    sortBy: NonNullable<TProductSort["sortBy"]>,
     sortOrder: TProductSort["sortOrder"],
+    searchQuery?: SQL | null,
 ): SQL[] => {
     const direction = sortOrder === "asc" ? asc : desc;
 
     switch (sortBy) {
+        case "relevance":
+            if (searchQuery) {
+                return [desc(sql`ts_rank(${productsTable.searchVector}, ${searchQuery})`)];
+            }
+            return [desc(productsTable.createdAt)];
         case "sellPrice":
             return [direction(productsTable.sellPrice)];
         case "name":

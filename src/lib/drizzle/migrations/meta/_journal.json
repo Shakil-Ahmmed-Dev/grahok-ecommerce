@@ -50,6 +50,13 @@
       "when": 1790045982385,
       "tag": "0006_broken_giant_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790046878342,
+      "tag": "0007_common_maverick",
+      "breakpoints": true
     }
   ]
 }

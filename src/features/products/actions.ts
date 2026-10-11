@@ -3,7 +3,7 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
-import { buildProductConditions, buildProductOrderBy } from "./query";
+import { buildProductConditions, buildProductOrderBy, buildProductSearchQuery, resolveProductSort } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
 
 const buildPaginationMeta = (total: number, page: number, pageSize: number): TPaginationMeta => {
@@ -19,8 +19,10 @@ const buildPaginationMeta = (total: number, page: number, pageSize: number): TPa
 };
 
 const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
-    const conditions = buildProductConditions(query, "public");
-    const orderBy = buildProductOrderBy(query.sortBy, query.sortOrder);
+    const searchQuery = buildProductSearchQuery(query.search);
+    const effectiveSort = resolveProductSort(query);
+    const conditions = buildProductConditions(query, "public", searchQuery);
+    const orderBy = buildProductOrderBy(effectiveSort, query.sortOrder, searchQuery);
     const offset = (query.page - 1) * query.pageSize;
 
     const [products, total] = await Promise.all([
@@ -35,6 +37,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
                 createdAt: false,
                 updatedAt: false,
                 deletedAt: false,
+                searchVector: false,
             }
         }),
         db.$count(productsTable, conditions),
@@ -59,6 +62,7 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
             createdAt: false,
             updatedAt: false,
             deletedAt: false,
+            searchVector: false,
         }
     });
     if (!product) {
@@ -72,6 +76,9 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
         where: (product, { eq }) => {
             return eq(product.slug, slug);
         },
+        columns: {
+            searchVector: false,
+        }
     });
     if (!product) {
         throw new NotFoundError("Product not found");
@@ -80,8 +87,10 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
 };
 
 const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProductsList> => {
-    const conditions = buildProductConditions(query, "admin");
-    const orderBy = buildProductOrderBy(query.sortBy, query.sortOrder);
+    const searchQuery = buildProductSearchQuery(query.search);
+    const effectiveSort = resolveProductSort(query);
+    const conditions = buildProductConditions(query, "admin", searchQuery);
+    const orderBy = buildProductOrderBy(effectiveSort, query.sortOrder, searchQuery);
     const offset = (query.page - 1) * query.pageSize;
 
     const [products, total] = await Promise.all([
@@ -90,6 +99,9 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
             orderBy,
             offset,
             limit: query.pageSize,
+            columns: {
+                searchVector: false,
+            }
         }),
         db.$count(productsTable, conditions),
     ]);
