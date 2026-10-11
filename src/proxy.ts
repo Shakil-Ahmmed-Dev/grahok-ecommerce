@@ -3,7 +3,7 @@ import { getRateLimitTier } from "@/lib/rate-limit/config";
 import { checkRateLimit } from "@/lib/rate-limit/rate-limiter";
 import { applySecurityHeaders } from "@/lib/security/headers";
 
-export const middleware = async (request: NextRequest) => {
+export const proxy = async (request: NextRequest) => {
     // Determine client IP safely
     const forwarded = request.headers.get("x-forwarded-for");
     const ip = forwarded
