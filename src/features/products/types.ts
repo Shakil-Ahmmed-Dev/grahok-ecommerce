@@ -76,7 +76,7 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
-}).omit({ deletedAt: true, searchVector: true });
+}).omit({ deletedAt: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
 
