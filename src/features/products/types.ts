@@ -41,25 +41,55 @@ export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
 export const GetProductsPublicSchema = GetProductPublicSchema.array();
 export type TGetProductsPublic = z.infer<typeof GetProductsPublicSchema>;
 
+export const CategoryFacetSchema = z.object({
+    name: z.string(),
+    count: z.number().int().nonnegative(),
+});
+export type TCategoryFacet = z.infer<typeof CategoryFacetSchema>;
+
+export const TagFacetSchema = z.object({
+    name: z.string(),
+    count: z.number().int().nonnegative(),
+});
+export type TTagFacet = z.infer<typeof TagFacetSchema>;
+
+export const PriceRangeFacetSchema = z.object({
+    min: z.number().nonnegative(),
+    max: z.number().nonnegative(),
+});
+export type TPriceRangeFacet = z.infer<typeof PriceRangeFacetSchema>;
+
+export const ProductFacetsSchema = z.object({
+    categories: z.array(CategoryFacetSchema),
+    subcategories: z.array(CategoryFacetSchema),
+    tags: z.array(TagFacetSchema),
+    priceRange: PriceRangeFacetSchema,
+});
+export type TProductFacets = z.infer<typeof ProductFacetsSchema>;
+
 export const PaginationMetaSchema = z.object({
-    page: z.number().int().positive(),
+    page: z.number().int().positive().optional(),
     pageSize: z.number().int().positive(),
-    total: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative().optional(),
+    totalPages: z.number().int().nonnegative().optional(),
     hasNextPage: z.boolean(),
     hasPrevPage: z.boolean(),
+    nextCursor: z.string().nullable().optional(),
+    prevCursor: z.string().nullable().optional(),
 });
 export type TPaginationMeta = z.infer<typeof PaginationMetaSchema>;
 
 export const ProductsListSchema = z.object({
     data: GetProductsPublicSchema,
     meta: PaginationMetaSchema,
+    facets: ProductFacetsSchema.optional(),
 });
 export type TProductsList = z.infer<typeof ProductsListSchema>;
 
 export const AdminProductsListSchema = z.object({
     data: GetProductsSchema,
     meta: PaginationMetaSchema,
+    facets: ProductFacetsSchema.optional(),
 });
 export type TAdminProductsList = z.infer<typeof AdminProductsListSchema>;
 
@@ -90,6 +120,7 @@ export type TUpdateProductOutput = z.output<typeof UpdateProductSchema>;
 export const ProductPaginationSchema = z.object({
     page: z.coerce.number<string>().int().positive("Page must be a positive integer").default(1),
     pageSize: z.coerce.number<string>().int().positive("Limit must be a positive integer").max(100, "Limit cannot exceed 100").default(10),
+    cursor: z.string().trim().min(1, "Cursor cannot be empty").optional(),
 });
 export type TProductPagination = z.infer<typeof ProductPaginationSchema>;
 
@@ -111,6 +142,7 @@ export const ProductFilterSchema = z.object({
     minPrice: z.coerce.number<string>().nonnegative("Minimum price must be a non-negative number").optional(),
     maxPrice: z.coerce.number<string>().nonnegative("Maximum price must be a non-negative number").optional(),
     inStock: QueryBooleanSchema.optional(),
+    includeFacets: QueryBooleanSchema.optional(),
 });
 export type TProductFilter = z.infer<typeof ProductFilterSchema>;
 
@@ -126,3 +158,26 @@ export const AdminProductQuerySchema = ProductQuerySchema.extend({
 });
 export type TAdminProductQueryInput = z.input<typeof AdminProductQuerySchema>;
 export type TAdminProductQuery = z.output<typeof AdminProductQuerySchema>;
+
+export const ProductSuggestionItemSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string(),
+    category: z.string(),
+    sellPrice: z.number(),
+    featuredImageUrl: z.string(),
+});
+export type TProductSuggestionItem = z.infer<typeof ProductSuggestionItemSchema>;
+
+export const ProductSuggestionsSchema = z.object({
+    products: z.array(ProductSuggestionItemSchema),
+    categories: z.array(z.string()),
+    tags: z.array(z.string()),
+});
+export type TProductSuggestions = z.infer<typeof ProductSuggestionsSchema>;
+
+export const SuggestQuerySchema = z.object({
+    q: z.string().trim().min(1, "Search query is required").max(100, "Query cannot exceed 100 characters"),
+    limit: z.coerce.number<string>().int().positive("Limit must be positive").max(20, "Limit cannot exceed 20").default(8),
+});
+export type TSuggestQuery = z.infer<typeof SuggestQuerySchema>;

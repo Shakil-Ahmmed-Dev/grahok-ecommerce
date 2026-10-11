@@ -1,18 +1,24 @@
 import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { productsTable } from "@/lib/drizzle/schemas/public";
 import {
     buildProductSearchQuery,
     resolveProductSort,
     buildProductConditions,
     buildProductOrderBy,
+    encodeCursor,
+    decodeCursor,
+    buildCursorCondition,
+    parseProductQuery,
 } from "@/features/products/query";
 import {
     GetProductPublicSchema,
     GetProductSchema,
-    CreateProductSchema,
-    UpdateProductSchema,
     ProductSortSchema,
+    ProductFacetsSchema,
+    ProductSuggestionsSchema,
+    SuggestQuerySchema,
+    ProductQuerySchema,
+    ProductsListSchema,
 } from "@/features/products/types";
 
 const dialect = new PgDialect();
@@ -135,7 +141,91 @@ function runTests() {
     const parsedExplicit = ProductSortSchema.parse({ sortBy: "relevance" });
     console.assert(parsedExplicit.sortBy === "relevance", "ProductSortSchema accepts relevance");
 
-    console.log("\nAll Full-Text Search unit and contract tests PASSED successfully! 🚀");
+    console.log("\n=== 5. Testing Keyset / Cursor Serialization & Invalidation ===");
+    const testDate = new Date("2026-10-11T12:00:00.000Z");
+    const testId = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+    const encoded = encodeCursor(testDate, testId);
+    console.assert(typeof encoded === "string" && encoded.length > 0, "Cursor must be a non-empty string");
+
+    const decoded = decodeCursor(encoded);
+    console.assert(decoded !== null, "Valid cursor should decode successfully");
+    console.assert(decoded?.createdAt.getTime() === testDate.getTime(), "Decoded date must match original date");
+    console.assert(decoded?.id === testId, "Decoded ID must match original ID");
+    console.log("✔ Cursor roundtrip encoding/decoding passed");
+
+    // Invalid cursors
+    console.assert(decodeCursor("invalid-base64!!!") === null, "Malformed base64 should return null");
+    console.assert(decodeCursor(Buffer.from(JSON.stringify({ notCreatedAt: "x" })).toString("base64url")) === null, "Invalid cursor payload should return null");
+    console.assert(decodeCursor(Buffer.from(JSON.stringify({ createdAt: "not-a-date", id: "123" })).toString("base64url")) === null, "Invalid date string should return null");
+    console.log("✔ Malformed cursor error handling passed");
+
+    // Cursor SQL condition
+    const cursorConditionDesc = buildCursorCondition({ createdAt: testDate, id: testId }, "desc");
+    const cursorSqlDesc = dialect.sqlToQuery(cursorConditionDesc);
+    console.assert(cursorSqlDesc.sql.includes("<") && cursorSqlDesc.sql.includes("="), "Desc cursor condition must generate tuple seek");
+    console.log("✔ Desc cursor SQL condition generated correctly:", cursorSqlDesc.sql);
+
+    const cursorConditionAsc = buildCursorCondition({ createdAt: testDate, id: testId }, "asc");
+    const cursorSqlAsc = dialect.sqlToQuery(cursorConditionAsc);
+    console.assert(cursorSqlAsc.sql.includes(">") && cursorSqlAsc.sql.includes("="), "Asc cursor condition must generate tuple seek");
+    console.log("✔ Asc cursor SQL condition generated correctly:", cursorSqlAsc.sql);
+
+    console.log("\n=== 6. Testing Facet Schemas & Query Parsing ===");
+    const dummyFacets = {
+        categories: [{ name: "Electronics", count: 42 }],
+        subcategories: [{ name: "Audio", count: 18 }],
+        tags: [{ name: "wireless", count: 15 }],
+        priceRange: { min: 19.99, max: 299.99 },
+    };
+    const parsedFacets = ProductFacetsSchema.parse(dummyFacets);
+    console.assert(parsedFacets.categories[0].name === "Electronics" && parsedFacets.categories[0].count === 42, "Categories facet parsed");
+    console.assert(parsedFacets.priceRange.min === 19.99 && parsedFacets.priceRange.max === 299.99, "Price range facet parsed");
+    console.log("✔ Facet schema parsing passed");
+
+    const parsedProductsList = ProductsListSchema.parse({
+        data: [dummyProduct],
+        meta: {
+            pageSize: 10,
+            hasNextPage: true,
+            hasPrevPage: false,
+            nextCursor: encoded,
+        },
+        facets: dummyFacets,
+    });
+    console.assert(parsedProductsList.meta.nextCursor === encoded, "Next cursor retained in meta");
+    console.assert(parsedProductsList.facets?.categories.length === 1, "Facets retained in ProductsListSchema");
+    console.log("✔ ProductsListSchema with facets and cursor meta passed");
+
+    console.log("\n=== 7. Testing Autocomplete / Suggestion Schemas ===");
+    const validSuggestQuery = SuggestQuerySchema.parse({ q: "headph", limit: "5" });
+    console.assert(validSuggestQuery.q === "headph" && validSuggestQuery.limit === 5, "Suggest query coerced limit and trimmed query");
+
+    const dummySuggestions = {
+        products: [{
+            id: testId,
+            name: "Wireless Headphones",
+            slug: "wireless-headphones",
+            category: "Electronics",
+            sellPrice: 99.99,
+            featuredImageUrl: "https://example.com/img.jpg",
+        }],
+        categories: ["Electronics", "Audio"],
+        tags: ["wireless", "audio"],
+    };
+    const parsedSuggestions = ProductSuggestionsSchema.parse(dummySuggestions);
+    console.assert(parsedSuggestions.products.length === 1 && parsedSuggestions.categories.length === 2, "Product suggestions parsed");
+    console.log("✔ Autocomplete suggestion schema passed");
+
+    console.log("\n=== 8. Testing Query Param Parsing with Facets and Cursor ===");
+    const testUrl = new URL("https://example.com/api/v1/products?search=shoes&includeFacets=true&cursor=" + encodeURIComponent(encoded) + "&tag=running&tag=sale");
+    const parsedQuery = parseProductQuery(testUrl, ProductQuerySchema);
+    console.assert(parsedQuery.search === "shoes", "Search param parsed");
+    console.assert(parsedQuery.includeFacets === true, "includeFacets transformed to boolean true");
+    console.assert(parsedQuery.cursor === encoded, "Cursor param parsed");
+    console.assert(Array.isArray(parsedQuery.tags) && parsedQuery.tags.length === 2, "Multi-tag array parsed");
+    console.log("✔ parseProductQuery with includeFacets, cursor, and multi-tags passed");
+
+    console.log("\nAll Full-Text Search, Facets, and Cursor tests PASSED successfully! 🚀");
 }
 
 runTests();
