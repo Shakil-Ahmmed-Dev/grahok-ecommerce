@@ -1,4 +1,4 @@
-import { PRODUCT_STATUSES, WEIGHT_UNITS } from "@/features/products/constants";
+import { INVENTORY_TYPES, PRODUCT_STATUSES, WEIGHT_UNITS } from "@/features/products/constants";
 import type { TProductImages, TProductTags } from "@/features/products/types";
 import { randomUUID } from "crypto";
 import { relations, sql, type SQL } from "drizzle-orm";
@@ -20,6 +20,7 @@ import {
 
 export const productStatusEnum = pgEnum("product_status", PRODUCT_STATUSES);
 export const weightUnitEnum = pgEnum("weight_unit", WEIGHT_UNITS);
+export const inventoryTypeEnum = pgEnum("inventory_type", INVENTORY_TYPES);
 
 export const tsvector = customType<{ data: string }>({
     dataType() {
@@ -62,6 +63,8 @@ export const productsTable = pgTable("products", {
     stock: numeric<"number">({
         scale: 2,
     }).notNull().default(0),
+    inventoryType: inventoryTypeEnum("inventory_type").notNull().default("discrete"),
+    baseWeightUnit: weightUnitEnum("base_weight_unit"),
     status: productStatusEnum().notNull().default(PRODUCT_STATUSES[0]),
     publishedAt: timestamp(),
     createdAt: timestamp().defaultNow().notNull(),
@@ -98,6 +101,7 @@ export const productsTable = pgTable("products", {
     ),
 }, (table) => [
     index("products_status_idx").on(table.status),
+    index("products_inventory_type_idx").on(table.inventoryType),
     index("products_published_at_idx").on(table.publishedAt),
     index("products_sell_price_idx").on(table.sellPrice),
     index("products_deleted_at_idx").on(table.deletedAt),
@@ -135,6 +139,9 @@ export const productVariantsTable = pgTable("product_variants", {
     stock: numeric<"number">({
         scale: 2,
     }).notNull().default(0),
+    poolConsumptionRate: numeric<"number">({
+        scale: 4,
+    }),
     isDefault: boolean("is_default").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     imageUrl: text(),

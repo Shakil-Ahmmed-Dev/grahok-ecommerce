@@ -23,11 +23,13 @@ import {
     ProductQuerySchema,
     ProductsListSchema,
     WeightUnitSchema,
+    InventoryTypeSchema,
     CreateProductVariantSchema,
     UpdateProductVariantSchema,
     ProductVariantPublicSchema,
     ProductVariantSchema,
 } from "@/features/products/types";
+import { calculateVariantStock, convertWeightUnit } from "@/features/products/inventory";
 
 const dialect = new PgDialect();
 
@@ -381,6 +383,8 @@ function runTests() {
         publishedAt: new Date(),
         sellPrice: "12.99",
         stock: "100",
+        inventoryType: "discrete" as const,
+        baseWeightUnit: null,
         searchVector: "raw-tsvector",
         categories: [],
         variants: [
@@ -447,7 +451,128 @@ function runTests() {
 
     console.log("✔ Product schema variant projection (public vs admin) passed");
 
-    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, and Variant tests PASSED successfully! 🚀");
+    console.log("\n=== 12. Testing Shared Inventory Pool & Unit Conversions ===");
+    // 1. InventoryTypeSchema validation
+    console.assert(InventoryTypeSchema.parse("discrete") === "discrete", "InventoryTypeSchema accepts 'discrete'");
+    console.assert(InventoryTypeSchema.parse("shared_pool") === "shared_pool", "InventoryTypeSchema accepts 'shared_pool'");
+    let invalidInvThrew = false;
+    try {
+        InventoryTypeSchema.parse("infinite");
+    } catch {
+        invalidInvThrew = true;
+    }
+    console.assert(invalidInvThrew, "InventoryTypeSchema rejects invalid inventory types");
+    console.log("✔ InventoryTypeSchema validated discrete and shared_pool types");
+
+    // 2. Unit conversion tests
+    console.assert(convertWeightUnit(500, "g", "kg") === 0.5, "500g is 0.5 kg");
+    console.assert(convertWeightUnit(2.5, "kg", "g") === 2500, "2.5kg is 2500 g");
+    console.assert(convertWeightUnit(1000, "mg", "g") === 1, "1000mg is 1 g");
+    console.assert(convertWeightUnit(750, "ml", "l") === 0.75, "750ml is 0.75 l");
+    console.assert(convertWeightUnit(3, "l", "ml") === 3000, "3l is 3000 ml");
+    console.assert(convertWeightUnit(12, "pcs", "pcs") === 12, "12 pcs is 12 pcs");
+    console.assert(convertWeightUnit(500, "g", "ml") === null, "Incompatible dimensions return null");
+    console.log("✔ Unit conversion matrix validated across mass, volume, and count");
+
+    // 3. Shared pool stock calculation (User's exact Rice scenario: 50 KG sack with 500g and 1kg variants)
+    const stock500gAt50Kg = calculateVariantStock({
+        masterStock: 50,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 500,
+        weightUnit: "g",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stock500gAt50Kg === 100, "50 KG of rice produces 100 packs of 500g (floor(50 / 0.5))");
+
+    const stock1kgAt50Kg = calculateVariantStock({
+        masterStock: 50,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 1,
+        weightUnit: "kg",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stock1kgAt50Kg === 50, "50 KG of rice produces 50 packs of 1kg (floor(50 / 1.0))");
+
+    const stock5kgAt50Kg = calculateVariantStock({
+        masterStock: 50,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 5,
+        weightUnit: "kg",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stock5kgAt50Kg === 10, "50 KG of rice produces 10 packs of 5kg (floor(50 / 5.0))");
+
+    // After 2 kg sold (48 kg left in pool)
+    const stock500gAt48Kg = calculateVariantStock({
+        masterStock: 48,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 500,
+        weightUnit: "g",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stock500gAt48Kg === 96, "48 KG of rice produces 96 packs of 500g (floor(48 / 0.5))");
+
+    const stock1kgAt48Kg = calculateVariantStock({
+        masterStock: 48,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 1,
+        weightUnit: "kg",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stock1kgAt48Kg === 48, "48 KG of rice produces 48 packs of 1kg (floor(48 / 1.0))");
+
+    // Pool empty (0 kg)
+    const stockAt0Kg = calculateVariantStock({
+        masterStock: 0,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 500,
+        weightUnit: "g",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stockAt0Kg === 0, "0 KG master stock produces 0 available packs");
+
+    // 4. Liquid volume shared pool: 20 Liters of oil with 250ml variant
+    const stock250mlOil = calculateVariantStock({
+        masterStock: 20,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 250,
+        weightUnit: "ml",
+        baseWeightUnit: "l",
+    });
+    console.assert(stock250mlOil === 80, "20 L of oil produces 80 bottles of 250ml (floor(20 / 0.25))");
+
+    // 5. Explicit poolConsumptionRate override (e.g. 0.525 kg per pack to account for packaging tare/spillage)
+    const stockWithWaste = calculateVariantStock({
+        masterStock: 50,
+        inventoryType: "shared_pool",
+        variantStock: 0,
+        weightValue: 500,
+        weightUnit: "g",
+        baseWeightUnit: "kg",
+        poolConsumptionRate: 0.525,
+    });
+    console.assert(stockWithWaste === 95, "Explicit poolConsumptionRate 0.525 produces 95 packs (floor(50 / 0.525))");
+
+    // 6. Discrete inventory returns variant's own stock directly
+    const stockDiscrete = calculateVariantStock({
+        masterStock: 500,
+        inventoryType: "discrete",
+        variantStock: 25,
+        weightValue: 500,
+        weightUnit: "g",
+        baseWeightUnit: "kg",
+    });
+    console.assert(stockDiscrete === 25, "Discrete inventory retains standalone variant stock");
+    console.log("✔ calculateVariantStock correctly evaluated shared pool, dynamic pack counts, overrides, and discrete fallbacks");
+
+    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, and Shared Pool Inventory tests PASSED successfully! 🚀");
 }
 
 runTests();

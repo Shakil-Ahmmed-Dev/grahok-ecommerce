@@ -43,6 +43,8 @@ import {
     resolveProductSort,
 } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
+import { calculateVariantStock } from "./inventory";
+import type { TWeightUnit } from "./constants";
 
 const buildPaginationMeta = (
     total: number | undefined,
@@ -66,6 +68,9 @@ const buildPaginationMeta = (
 };
 
 function mapProductCategories<T extends {
+    stock?: string | number;
+    inventoryType?: string;
+    baseWeightUnit?: string | null;
     productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }>;
     variants?: Array<{
         id: string;
@@ -77,6 +82,7 @@ function mapProductCategories<T extends {
         purchasePrice?: string | number;
         sellPrice: string | number;
         stock: string | number;
+        poolConsumptionRate?: string | number | null;
         isDefault: boolean;
         isActive: boolean;
         imageUrl: string | null;
@@ -85,6 +91,9 @@ function mapProductCategories<T extends {
     }>;
 }>(product: T) {
     const { productCategories, variants, ...rest } = product;
+    const invType = (product.inventoryType ?? "discrete") as "discrete" | "shared_pool";
+    const masterStock = Number(product.stock ?? 0);
+
     return {
         ...rest,
         categories: (productCategories ?? []).map((pc) => ({
@@ -93,13 +102,27 @@ function mapProductCategories<T extends {
             slug: pc.category.slug,
             isPrimary: pc.isPrimary,
         })),
-        variants: (variants ?? []).map((v) => ({
-            ...v,
-            weightValue: Number(v.weightValue),
-            sellPrice: Number(v.sellPrice),
-            stock: Number(v.stock),
-            ...(v.purchasePrice !== undefined ? { purchasePrice: Number(v.purchasePrice) } : {}),
-        })),
+        variants: (variants ?? []).map((v) => {
+            const rawStock = Number(v.stock);
+            const computedStock = calculateVariantStock({
+                masterStock,
+                inventoryType: invType,
+                variantStock: rawStock,
+                weightValue: Number(v.weightValue),
+                weightUnit: v.weightUnit as TWeightUnit,
+                baseWeightUnit: (product.baseWeightUnit as TWeightUnit | null | undefined) ?? null,
+                poolConsumptionRate: v.poolConsumptionRate != null ? Number(v.poolConsumptionRate) : null,
+            });
+
+            return {
+                ...v,
+                weightValue: Number(v.weightValue),
+                sellPrice: Number(v.sellPrice),
+                stock: computedStock,
+                ...(v.poolConsumptionRate != null ? { poolConsumptionRate: Number(v.poolConsumptionRate) } : {}),
+                ...(v.purchasePrice !== undefined ? { purchasePrice: Number(v.purchasePrice) } : {}),
+            };
+        }),
     };
 }
 
@@ -462,6 +485,7 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
                 purchasePrice: v.purchasePrice,
                 sellPrice: v.sellPrice,
                 stock: v.stock ?? 0,
+                poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
                 isDefault,
                 isActive: v.isActive ?? true,
                 imageUrl: v.imageUrl ?? null,
@@ -542,6 +566,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                         purchasePrice: v.purchasePrice,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,
+                        poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
                         isDefault,
                         isActive: v.isActive ?? true,
                         imageUrl: v.imageUrl ?? null,
@@ -830,7 +855,7 @@ const addVariantToProduct = async (
 
     const product = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
-        columns: { id: true, slug: true },
+        columns: { id: true, slug: true, stock: true, inventoryType: true, baseWeightUnit: true },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
@@ -887,18 +912,30 @@ const addVariantToProduct = async (
             purchasePrice: parsed.purchasePrice,
             sellPrice: parsed.sellPrice,
             stock: parsed.stock,
+            poolConsumptionRate: parsed.poolConsumptionRate != null ? parsed.poolConsumptionRate : null,
             isDefault,
             isActive: parsed.isActive,
             imageUrl: parsed.imageUrl ?? null,
         })
         .returning();
 
+    const computedStock = calculateVariantStock({
+        masterStock: Number(product.stock),
+        inventoryType: product.inventoryType,
+        variantStock: Number(variant.stock),
+        weightValue: Number(variant.weightValue),
+        weightUnit: variant.weightUnit as TWeightUnit,
+        baseWeightUnit: product.baseWeightUnit as TWeightUnit | null,
+        poolConsumptionRate: variant.poolConsumptionRate != null ? Number(variant.poolConsumptionRate) : null,
+    });
+
     return ProductVariantSchema.parse({
         ...variant,
         weightValue: Number(variant.weightValue),
         purchasePrice: Number(variant.purchasePrice),
         sellPrice: Number(variant.sellPrice),
-        stock: Number(variant.stock),
+        stock: computedStock,
+        ...(variant.poolConsumptionRate != null ? { poolConsumptionRate: Number(variant.poolConsumptionRate) } : {}),
     });
 };
 
@@ -911,7 +948,7 @@ const updateVariant = async (
 
     const product = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
-        columns: { id: true, slug: true },
+        columns: { id: true, slug: true, stock: true, inventoryType: true, baseWeightUnit: true },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
@@ -968,12 +1005,23 @@ const updateVariant = async (
         .where(eq(productVariantsTable.id, variantId))
         .returning();
 
+    const computedStock = calculateVariantStock({
+        masterStock: Number(product.stock),
+        inventoryType: product.inventoryType,
+        variantStock: Number(updated.stock),
+        weightValue: Number(updated.weightValue),
+        weightUnit: updated.weightUnit as TWeightUnit,
+        baseWeightUnit: product.baseWeightUnit as TWeightUnit | null,
+        poolConsumptionRate: updated.poolConsumptionRate != null ? Number(updated.poolConsumptionRate) : null,
+    });
+
     return ProductVariantSchema.parse({
         ...updated,
         weightValue: Number(updated.weightValue),
         purchasePrice: Number(updated.purchasePrice),
         sellPrice: Number(updated.sellPrice),
-        stock: Number(updated.stock),
+        stock: computedStock,
+        ...(updated.poolConsumptionRate != null ? { poolConsumptionRate: Number(updated.poolConsumptionRate) } : {}),
     });
 };
 

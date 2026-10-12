@@ -1,7 +1,7 @@
 import { productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import z from "zod";
-import { PRODUCT_STATUSES, WEIGHT_UNITS } from "./constants";
+import { INVENTORY_TYPES, PRODUCT_STATUSES, WEIGHT_UNITS } from "./constants";
 
 export const ProductTagSchema = z.string().trim().min(1, "Tag cannot be empty");
 export type TProductTag = z.infer<typeof ProductTagSchema>;
@@ -21,6 +21,9 @@ export type TProductSlug = z.infer<typeof ProductSlugSchema>;
 export const ProductStatusSchema = z.enum(PRODUCT_STATUSES);
 export type TProductStatus = z.infer<typeof ProductStatusSchema>;
 
+export const InventoryTypeSchema = z.enum(INVENTORY_TYPES);
+export type TInventoryType = z.infer<typeof InventoryTypeSchema>;
+
 export const WeightUnitSchema = z.enum(WEIGHT_UNITS);
 export type TWeightUnit = z.infer<typeof WeightUnitSchema>;
 
@@ -36,6 +39,7 @@ export const ProductVariantPublicSchema = z.object({
     sku: z.string(),
     sellPrice: z.number(),
     stock: z.number(),
+    poolConsumptionRate: z.number().nullable().optional(),
     isDefault: z.boolean(),
     isActive: z.boolean(),
     imageUrl: z.string().nullable().optional(),
@@ -57,6 +61,7 @@ export const CreateProductVariantSchema = z.object({
     purchasePrice: z.coerce.number().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number().nonnegative("Stock must be a non-negative number").default(0),
+    poolConsumptionRate: z.coerce.number().positive("Pool consumption rate must be greater than 0").nullable().optional(),
     isDefault: z.boolean().default(false),
     isActive: z.boolean().default(true),
     imageUrl: z.url("Image URL must be a valid URL").trim().nullable().optional(),
@@ -79,7 +84,10 @@ export const ProductCategoryItemSchema = z.object({
 });
 export type TProductCategoryItem = z.infer<typeof ProductCategoryItemSchema>;
 
-export const ProductModelSchema = createSelectSchema(productsTable);
+export const ProductModelSchema = createSelectSchema(productsTable, {
+    inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
+    baseWeightUnit: WeightUnitSchema.nullable().optional(),
+});
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 
 export const GetProductBaseSchema = ProductModelSchema.omit({
@@ -180,6 +188,8 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
+    inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
+    baseWeightUnit: WeightUnitSchema.optional().nullable(),
     status: ProductStatusSchema.default(ProductStatusSchema.enum.draft),
     publishedAt: z.coerce.date().optional().nullable(),
 }).extend({
