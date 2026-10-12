@@ -98,12 +98,18 @@ function runTests() {
     const conds = buildProductConditions({ search: "headphones" }, "public", searchQ);
     const condSql = dialect.sqlToQuery(sql`${conds}`);
     console.assert(condSql.sql.includes('"search_vector" @@'), "Conditions must include search_vector @@ query");
-    console.log("✔ Condition builder generates FTS @@ predicate:", condSql.sql);
+    console.assert(condSql.sql.includes('"status" ='), "Conditions must include status check");
+    console.log("✔ Condition builder generates FTS @@ predicate and status lifecycle:", condSql.sql);
 
     const orderRelevance = buildProductOrderBy("relevance", "desc", searchQ);
     const orderSql = dialect.sqlToQuery(sql`${orderRelevance[0]}`);
     console.assert(orderSql.sql.includes('ts_rank("products"."search_vector"'), "Order by relevance must use ts_rank");
     console.log("✔ Order builder generates ts_rank relevance ranking:", orderSql.sql);
+
+    const orderPublished = buildProductOrderBy("publishedAt", "desc");
+    const orderPublishedSql = dialect.sqlToQuery(sql`${orderPublished[0]}`);
+    console.assert(orderPublishedSql.sql.includes('"publishedAt" desc'), "Order by publishedAt must order by publishedAt desc");
+    console.log("✔ Order builder generates publishedAt order correctly:", orderPublishedSql.sql);
 
     console.log("\n=== 4. Testing Schema Projection Safety ===");
     // Ensure searchVector cannot be parsed or present in output
@@ -120,21 +126,25 @@ function runTests() {
         images: [],
         sellPrice: "99.99",
         stock: "10",
+        status: "published" as const,
+        publishedAt: new Date(),
         searchVector: "some-raw-tsvector-data",
     };
 
     const parsedPublic = GetProductPublicSchema.parse(dummyProduct);
     console.assert(!("searchVector" in parsedPublic), "GetProductPublicSchema must strip searchVector");
+    console.assert(!("purchasePrice" in parsedPublic), "GetProductPublicSchema must strip purchasePrice");
+    console.assert(parsedPublic.status === "published", "GetProductPublicSchema retains status");
 
     const parsedAdmin = GetProductSchema.parse({
         ...dummyProduct,
         purchasePrice: "50.00",
-        isActive: true,
         createdAt: new Date(),
         updatedAt: new Date(),
         deletedAt: null,
     });
     console.assert(!("searchVector" in parsedAdmin), "GetProductSchema must strip searchVector");
+    console.assert(Number(parsedAdmin.purchasePrice) === 50, "GetProductSchema retains purchasePrice");
     console.log("✔ searchVector successfully stripped from all external schema projections");
 
     // Test ProductSortSchema parsing
@@ -142,6 +152,8 @@ function runTests() {
     console.assert(parsedDefault.sortBy === undefined, "ProductSortSchema must leave sortBy optional when omitted");
     const parsedExplicit = ProductSortSchema.parse({ sortBy: "relevance" });
     console.assert(parsedExplicit.sortBy === "relevance", "ProductSortSchema accepts relevance");
+    const parsedPublishedSort = ProductSortSchema.parse({ sortBy: "publishedAt" });
+    console.assert(parsedPublishedSort.sortBy === "publishedAt", "ProductSortSchema accepts publishedAt");
 
     console.log("\n=== 5. Testing Keyset / Cursor Serialization & Invalidation ===");
     const testDate = new Date("2026-10-11T12:00:00.000Z");

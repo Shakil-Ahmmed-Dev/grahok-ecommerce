@@ -21,7 +21,7 @@ import {
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { productsTable } from "@/lib/drizzle/schemas/public";
-import { and, desc, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
     buildProductConditions,
@@ -86,7 +86,6 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
             limit,
             columns: {
                 purchasePrice: false,
-                isActive: false,
                 updatedAt: false,
                 deletedAt: false,
                 searchVector: false,
@@ -123,16 +122,21 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
 
 const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> => {
     const product = await db.query.productsTable.findFirst({
-        where: (product, { eq, and, isNull }) => {
+        where: (product, { eq, and, or, lte, isNull }) => {
             return and(
                 eq(product.slug, slug),
-                eq(product.isActive, true),
-                isNull(product.deletedAt)
+                isNull(product.deletedAt),
+                or(
+                    eq(product.status, "published"),
+                    and(
+                        eq(product.status, "scheduled"),
+                        lte(product.publishedAt, new Date())
+                    )
+                )
             );
         },
         columns: {
             purchasePrice: false,
-            isActive: false,
             createdAt: false,
             updatedAt: false,
             deletedAt: false,
@@ -223,6 +227,13 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
 };
 
 const createProduct = async (data: TCreateProductOutput): Promise<TProductModel> => {
+    if (data.status === "scheduled" && !data.publishedAt) {
+        throw new BadRequestError("publishedAt is required when status is 'scheduled'");
+    }
+    if (data.status === "published" && !data.publishedAt) {
+        data.publishedAt = new Date();
+    }
+
     const explicitSlug = data.slug;
     const baseSlug = explicitSlug
         ? slugify(explicitSlug)
@@ -268,6 +279,15 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
     if (existingProduct) {
         let updateData = data;
 
+        const targetStatus = updateData.status ?? existingProduct.status;
+        const targetPublishedAt = updateData.publishedAt !== undefined ? updateData.publishedAt : existingProduct.publishedAt;
+        if (targetStatus === "scheduled" && !targetPublishedAt) {
+            throw new BadRequestError("publishedAt is required when status is 'scheduled'");
+        }
+        if (targetStatus === "published" && !targetPublishedAt) {
+            updateData = { ...updateData, publishedAt: new Date() };
+        }
+
         if (data.slug && data.slug !== slug) {
             const newSlug = slugify(data.slug);
             if (!newSlug) {
@@ -283,7 +303,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                 throw new ConflictError("A product with this slug already exists");
             }
 
-            updateData = { ...data, slug: newSlug };
+            updateData = { ...updateData, slug: newSlug };
         }
 
         const [product] = await db.update(productsTable)
@@ -333,8 +353,14 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
     const searchQuery = buildProductSearchQuery(trimmed);
 
     const productConditions = [
-        eq(productsTable.isActive, true),
         isNull(productsTable.deletedAt),
+        or(
+            eq(productsTable.status, "published"),
+            and(
+                eq(productsTable.status, "scheduled"),
+                lte(productsTable.publishedAt, sql`NOW()`)
+            )
+        )!,
     ];
     if (searchQuery) {
         productConditions.push(sql`${productsTable.searchVector} @@ ${searchQuery}`);
@@ -361,7 +387,7 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
         db.execute(sql`
             SELECT DISTINCT ${productsTable.category} AS name
             FROM ${productsTable}
-            WHERE ${productsTable.isActive} = true
+            WHERE (${productsTable.status} = 'published' OR (${productsTable.status} = 'scheduled' AND ${productsTable.publishedAt} <= NOW()))
               AND ${productsTable.deletedAt} IS NULL
               AND ${productsTable.category} ILIKE ${`%${trimmed}%`}
             LIMIT 3
@@ -369,7 +395,7 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
         db.execute(sql`
             SELECT DISTINCT tag
             FROM ${productsTable}, jsonb_array_elements_text(coalesce(${productsTable.tags}, '[]'::jsonb)) AS tag
-            WHERE ${productsTable.isActive} = true
+            WHERE (${productsTable.status} = 'published' OR (${productsTable.status} = 'scheduled' AND ${productsTable.publishedAt} <= NOW()))
               AND ${productsTable.deletedAt} IS NULL
               AND tag ILIKE ${`%${trimmed}%`}
             LIMIT 3

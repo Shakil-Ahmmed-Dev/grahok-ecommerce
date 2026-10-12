@@ -1,6 +1,7 @@
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import z from "zod";
+import { PRODUCT_STATUSES } from "./constants";
 
 export const ProductTagSchema = z.string().trim().min(1, "Tag cannot be empty");
 export type TProductTag = z.infer<typeof ProductTagSchema>;
@@ -17,6 +18,9 @@ export type TProductImages = z.infer<typeof ProductImagesSchema>;
 export const ProductSlugSchema = z.string().trim().min(1, "Product slug is required");
 export type TProductSlug = z.infer<typeof ProductSlugSchema>;
 
+export const ProductStatusSchema = z.enum(PRODUCT_STATUSES);
+export type TProductStatus = z.infer<typeof ProductStatusSchema>;
+
 export const ProductModelSchema = createSelectSchema(productsTable);
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 
@@ -30,7 +34,6 @@ export type TGetProducts = z.infer<typeof GetProductsSchema>;
 
 export const GetProductPublicSchema = ProductModelSchema.omit({
     purchasePrice: true,
-    isActive: true,
     createdAt: true,
     updatedAt: true,
     deletedAt: true,
@@ -108,6 +111,8 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
+    status: ProductStatusSchema.default(ProductStatusSchema.enum.draft),
+    publishedAt: z.coerce.date().optional().nullable(),
 }).omit({ deletedAt: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
@@ -131,7 +136,7 @@ export const QueryBooleanSchema = z
     .transform((value) => value === "true" || value === "1");
 
 export const ProductSortSchema = z.object({
-    sortBy: z.enum(["createdAt", "sellPrice", "name", "relevance"]).optional(),
+    sortBy: z.enum(["createdAt", "publishedAt", "sellPrice", "name", "relevance"]).optional(),
     sortOrder: z.enum(["asc", "desc"]).default("desc"),
 });
 export type TProductSort = z.infer<typeof ProductSortSchema>;
@@ -155,7 +160,7 @@ export type TProductQueryInput = z.input<typeof ProductQuerySchema>;
 export type TProductQuery = z.output<typeof ProductQuerySchema>;
 
 export const AdminProductQuerySchema = ProductQuerySchema.extend({
-    isActive: QueryBooleanSchema.optional(),
+    status: ProductStatusSchema.optional(),
     includeDeleted: QueryBooleanSchema.optional(),
 });
 export type TAdminProductQueryInput = z.input<typeof AdminProductQuerySchema>;

@@ -17,7 +17,8 @@ const dummyProducts: TCreateProductInput[] = [
             "https://example.com/images/headphones-1.jpg",
             "https://example.com/images/headphones-2.jpg"
         ],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "55.00",
         sellPrice: "99.99",
         stock: "120"
@@ -33,7 +34,8 @@ const dummyProducts: TCreateProductInput[] = [
             "https://example.com/images/chair-1.jpg",
             "https://example.com/images/chair-2.jpg"
         ],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "120.00",
         sellPrice: "249.99",
         stock: "45"
@@ -49,7 +51,8 @@ const dummyProducts: TCreateProductInput[] = [
             "https://example.com/images/bottle-1.jpg",
             "https://example.com/images/bottle-2.jpg"
         ],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "6.50",
         sellPrice: "14.99",
         stock: "300"
@@ -62,7 +65,7 @@ const dummyProducts: TCreateProductInput[] = [
         tags: ["clothing", "organic", "tshirt"],
         featuredImageUrl: "https://example.com/images/tshirt-feature.jpg",
         images: ["https://example.com/images/tshirt-1.jpg"],
-        isActive: false,
+        status: "draft",
         purchasePrice: "8.00",
         sellPrice: "19.99",
         stock: "200"
@@ -79,7 +82,8 @@ const dummyProducts: TCreateProductInput[] = [
             "https://example.com/images/tv-2.jpg",
             "https://example.com/images/tv-3.jpg"
         ],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "350.00",
         sellPrice: "599.99",
         stock: "25"
@@ -92,7 +96,7 @@ const dummyProducts: TCreateProductInput[] = [
         tags: ["fitness", "wearable", "bluetooth"],
         featuredImageUrl: "https://example.com/images/tracker-feature.jpg",
         images: ["https://example.com/images/tracker-1.jpg"],
-        isActive: false,
+        status: "draft",
         purchasePrice: "15.00",
         sellPrice: "39.99",
         stock: "150"
@@ -105,7 +109,8 @@ const dummyProducts: TCreateProductInput[] = [
         tags: ["kitchen", "pan", "non-stick"],
         featuredImageUrl: "https://example.com/images/pan-feature.jpg",
         images: ["https://example.com/images/pan-1.jpg"],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "9.00",
         sellPrice: "24.99",
         stock: "80"
@@ -118,7 +123,7 @@ const dummyProducts: TCreateProductInput[] = [
         tags: ["kids", "puzzle", "wooden"],
         featuredImageUrl: "https://example.com/images/puzzle-feature.jpg",
         images: ["https://example.com/images/puzzle-1.jpg"],
-        isActive: false,
+        status: "draft",
         purchasePrice: "4.00",
         sellPrice: "12.99",
         stock: "500"
@@ -131,7 +136,8 @@ const dummyProducts: TCreateProductInput[] = [
         tags: ["power", "battery", "portable"],
         featuredImageUrl: "https://example.com/images/powerbank-feature.jpg",
         images: ["https://example.com/images/powerbank-1.jpg"],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "10.00",
         sellPrice: "29.99",
         stock: "220"
@@ -144,7 +150,8 @@ const dummyProducts: TCreateProductInput[] = [
         tags: ["candle", "soy", "lavender"],
         featuredImageUrl: "https://example.com/images/candle-feature.jpg",
         images: ["https://example.com/images/candle-1.jpg"],
-        isActive: true,
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "2.50",
         sellPrice: "9.99",
         stock: "340"

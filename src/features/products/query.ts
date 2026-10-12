@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, gt, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import z from "zod";
 import { productsTable } from "@/lib/drizzle/schemas/public";
 import { db } from "@/lib/drizzle";
-import { ProductFacetsSchema, type TProductFacets, type TProductSort } from "./types";
+import { ProductFacetsSchema, type TProductFacets, type TProductSort, type TProductStatus } from "./types";
 
 export interface TCursorPayload {
     createdAt: string;
@@ -52,7 +52,7 @@ export interface TProductFilterFields {
     minPrice?: number;
     maxPrice?: number;
     inStock?: boolean;
-    isActive?: boolean;
+    status?: TProductStatus;
     includeDeleted?: boolean;
     cursor?: string;
     includeFacets?: boolean;
@@ -95,11 +95,19 @@ export const buildProductConditions = (
     const conditions: SQL[] = [];
 
     if (mode === "public") {
-        conditions.push(eq(productsTable.isActive, true));
         conditions.push(isNull(productsTable.deletedAt));
+        conditions.push(
+            or(
+                eq(productsTable.status, "published"),
+                and(
+                    eq(productsTable.status, "scheduled"),
+                    lte(productsTable.publishedAt, sql`NOW()`)
+                )
+            )!
+        );
     } else {
-        if (query.isActive !== undefined) {
-            conditions.push(eq(productsTable.isActive, query.isActive));
+        if (query.status) {
+            conditions.push(eq(productsTable.status, query.status));
         }
         if (!query.includeDeleted) {
             conditions.push(isNull(productsTable.deletedAt));
@@ -246,6 +254,8 @@ export const buildProductOrderBy = (
             return [direction(productsTable.sellPrice)];
         case "name":
             return [direction(sql`lower(${productsTable.name})`)];
+        case "publishedAt":
+            return [direction(productsTable.publishedAt), direction(productsTable.createdAt)];
         case "createdAt":
         default:
             return [direction(productsTable.createdAt)];

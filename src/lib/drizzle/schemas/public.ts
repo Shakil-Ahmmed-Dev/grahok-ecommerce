@@ -1,7 +1,10 @@
+import { PRODUCT_STATUSES } from "@/features/products/constants";
 import type { TProductImages, TProductTags } from "@/features/products/types";
 import { randomUUID } from "crypto";
 import { sql, type SQL } from "drizzle-orm";
-import { boolean, customType, index, jsonb, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { customType, index, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+
+export const productStatusEnum = pgEnum("product_status", PRODUCT_STATUSES);
 
 export const tsvector = customType<{ data: string }>({
     dataType() {
@@ -29,7 +32,8 @@ export const productsTable = pgTable("products", {
     stock: numeric<"number">({
         scale: 2
     }).notNull().default(0),
-    isActive: boolean().notNull().default(true),
+    status: productStatusEnum().notNull().default(PRODUCT_STATUSES[0]),
+    publishedAt: timestamp(),
     createdAt: timestamp().defaultNow().notNull(),
     updatedAt: timestamp().defaultNow()
         .$onUpdate(() => /* @__PURE__ */ new Date())
@@ -71,7 +75,8 @@ export const productsTable = pgTable("products", {
         `
     ),
 }, (table) => [
-    index("products_is_active_created_at_idx").on(table.isActive, table.createdAt),
+    index("products_status_idx").on(table.status),
+    index("products_published_at_idx").on(table.publishedAt),
     index("products_category_idx").on(table.category),
     index("products_subcategory_idx").on(table.subcategory),
     index("products_sell_price_idx").on(table.sellPrice),

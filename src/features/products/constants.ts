@@ -1,0 +1,1 @@
+export const PRODUCT_STATUSES = ["draft", "published", "archived", "scheduled"] as const;
