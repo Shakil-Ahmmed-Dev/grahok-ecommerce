@@ -102,6 +102,8 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
         .min(1, "Product slug is required")
         .max(120, "Product slug cannot exceed 120 characters")
         .optional(),
+    shortDescription: z.string().trim().max(500, "Short description cannot exceed 500 characters").optional(),
+    description: z.string().trim().optional(),
     featuredImageUrl: z.url().trim().min(1, "Featured image URL is required"),
     purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),

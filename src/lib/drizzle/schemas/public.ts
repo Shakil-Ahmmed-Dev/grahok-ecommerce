@@ -15,6 +15,8 @@ export const productsTable = pgTable("products", {
     slug: text().notNull().unique(),
     category: text().notNull().default("Uncategorized"),
     subcategory: text().notNull().default("Uncategorized"),
+    shortDescription: text().notNull().default(""),
+    description: text().notNull().default(""),
     tags: jsonb().$type<TProductTags>().notNull().default([]),
     featuredImageUrl: text().notNull(),
     images: jsonb().$type<TProductImages>().notNull().default([]),
@@ -46,7 +48,7 @@ export const productsTable = pgTable("products", {
             setweight(
                 to_tsvector(
                     'english',
-                    coalesce("category", '')
+                    coalesce("category", '') || ' ' || coalesce("subcategory", '')
                 ),
                 'B'
             )
@@ -54,9 +56,17 @@ export const productsTable = pgTable("products", {
             setweight(
                 to_tsvector(
                     'english',
-                    coalesce("subcategory", '')
+                    coalesce("shortDescription", '')
                 ),
                 'C'
+            )
+            ||
+            setweight(
+                to_tsvector(
+                    'english',
+                    coalesce("description", '')
+                ),
+                'D'
             )
         `
     ),

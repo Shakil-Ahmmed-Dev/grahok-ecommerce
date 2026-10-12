@@ -113,6 +113,8 @@ function runTests() {
         slug: "wireless-headphones",
         category: "Electronics",
         subcategory: "Audio",
+        shortDescription: "Premium wireless noise-cancelling headphones",
+        description: "Experience world-class noise cancellation with 30 hours of battery life.",
         tags: ["audio"],
         featuredImageUrl: "https://example.com/img.jpg",
         images: [],

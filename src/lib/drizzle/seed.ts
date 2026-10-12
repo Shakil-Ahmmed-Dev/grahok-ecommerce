@@ -10,6 +10,8 @@ const dummyProducts: TCreateProductInput[] = [
         category: "Electronics",
         subcategory: "Audio",
         tags: ["audio", "wireless", "headphones", "noise-cancelling"],
+        shortDescription: "Industry-leading wireless noise-cancelling over-ear headphones with premium sound.",
+        description: "Experience silence and acoustic fidelity with active noise cancellation, 30 hours of battery life, and ultra-comfortable earcups designed for all-day listening.",
         featuredImageUrl: "https://example.com/images/headphones-feature.jpg",
         images: [
             "https://example.com/images/headphones-1.jpg",
