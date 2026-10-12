@@ -1,7 +1,7 @@
-import { productsTable } from "@/lib/drizzle/schemas/public";
+import { productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import z from "zod";
-import { PRODUCT_STATUSES } from "./constants";
+import { PRODUCT_STATUSES, WEIGHT_UNITS } from "./constants";
 
 export const ProductTagSchema = z.string().trim().min(1, "Tag cannot be empty");
 export type TProductTag = z.infer<typeof ProductTagSchema>;
@@ -21,6 +21,56 @@ export type TProductSlug = z.infer<typeof ProductSlugSchema>;
 export const ProductStatusSchema = z.enum(PRODUCT_STATUSES);
 export type TProductStatus = z.infer<typeof ProductStatusSchema>;
 
+export const WeightUnitSchema = z.enum(WEIGHT_UNITS);
+export type TWeightUnit = z.infer<typeof WeightUnitSchema>;
+
+export const ProductVariantModelSchema = createSelectSchema(productVariantsTable);
+export type TProductVariantModel = z.infer<typeof ProductVariantModelSchema>;
+
+export const ProductVariantPublicSchema = z.object({
+    id: z.string(),
+    productId: z.string(),
+    title: z.string(),
+    weightValue: z.number(),
+    weightUnit: WeightUnitSchema,
+    sku: z.string(),
+    sellPrice: z.number(),
+    stock: z.number(),
+    isDefault: z.boolean(),
+    isActive: z.boolean(),
+    imageUrl: z.string().nullable().optional(),
+});
+export type TProductVariantPublic = z.infer<typeof ProductVariantPublicSchema>;
+
+export const ProductVariantSchema = ProductVariantPublicSchema.extend({
+    purchasePrice: z.number(),
+    createdAt: z.date().or(z.string()),
+    updatedAt: z.date().or(z.string()),
+});
+export type TProductVariant = z.infer<typeof ProductVariantSchema>;
+
+export const CreateProductVariantSchema = z.object({
+    title: z.string().trim().min(1).optional(),
+    weightValue: z.coerce.number().positive("Weight must be greater than 0"),
+    weightUnit: WeightUnitSchema,
+    sku: z.string().trim().min(1, "SKU cannot be empty").optional(),
+    purchasePrice: z.coerce.number().nonnegative("Purchase price must be a non-negative number"),
+    sellPrice: z.coerce.number().nonnegative("Sell price must be a non-negative number"),
+    stock: z.coerce.number().nonnegative("Stock must be a non-negative number").default(0),
+    isDefault: z.boolean().default(false),
+    isActive: z.boolean().default(true),
+    imageUrl: z.url("Image URL must be a valid URL").trim().nullable().optional(),
+});
+export type TCreateProductVariantInput = z.input<typeof CreateProductVariantSchema>;
+export type TCreateProductVariantOutput = z.output<typeof CreateProductVariantSchema>;
+
+export const UpdateProductVariantSchema = CreateProductVariantSchema.partial();
+export type TUpdateProductVariantInput = z.input<typeof UpdateProductVariantSchema>;
+export type TUpdateProductVariantOutput = z.output<typeof UpdateProductVariantSchema>;
+
+export const VariantIdSchema = z.string().uuid("Invalid variant ID format");
+export type TVariantId = z.infer<typeof VariantIdSchema>;
+
 export const ProductCategoryItemSchema = z.object({
     id: z.string(),
     name: z.string(),
@@ -38,6 +88,7 @@ export const GetProductBaseSchema = ProductModelSchema.omit({
 
 export const GetProductSchema = GetProductBaseSchema.extend({
     categories: z.array(ProductCategoryItemSchema).default([]),
+    variants: z.array(ProductVariantSchema).default([]),
 });
 export type TGetProduct = z.infer<typeof GetProductSchema>;
 
@@ -54,6 +105,7 @@ export const GetProductPublicBaseSchema = ProductModelSchema.omit({
 
 export const GetProductPublicSchema = GetProductPublicBaseSchema.extend({
     categories: z.array(ProductCategoryItemSchema).default([]),
+    variants: z.array(ProductVariantPublicSchema).default([]),
 });
 export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
 
@@ -133,6 +185,7 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
 }).extend({
     categoryIds: z.array(z.string().trim().min(1)).optional(),
     primaryCategoryId: z.string().trim().min(1).optional(),
+    variants: z.array(CreateProductVariantSchema).optional(),
 }).omit({ deletedAt: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;

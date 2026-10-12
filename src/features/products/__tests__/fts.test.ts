@@ -22,6 +22,11 @@ import {
     RelatedProductsQuerySchema,
     ProductQuerySchema,
     ProductsListSchema,
+    WeightUnitSchema,
+    CreateProductVariantSchema,
+    UpdateProductVariantSchema,
+    ProductVariantPublicSchema,
+    ProductVariantSchema,
 } from "@/features/products/types";
 
 const dialect = new PgDialect();
@@ -295,7 +300,154 @@ function runTests() {
     console.assert(limitOverflowThrew, "Related products limit > 20 should throw validation error");
     console.log("✔ RelatedProductsQuerySchema validates limits and constraints");
 
-    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, and Recommendation tests PASSED successfully! 🚀");
+    console.log("\n=== 11. Testing Weight-Based Variant Schemas ===");
+    // Weight units validation
+    const validUnits = ["g", "kg", "mg", "ml", "l", "oz", "lb", "pcs"];
+    for (const unit of validUnits) {
+        console.assert(WeightUnitSchema.parse(unit) === unit, `WeightUnitSchema should accept ${unit}`);
+    }
+
+    let invalidUnitThrew = false;
+    try {
+        WeightUnitSchema.parse("gallons");
+    } catch {
+        invalidUnitThrew = true;
+    }
+    console.assert(invalidUnitThrew, "WeightUnitSchema should reject invalid units");
+    console.log("✔ WeightUnitSchema accepted all standard weight/volume units and rejected invalid ones");
+
+    // CreateProductVariantSchema parsing and coercion
+    const parsedVariantInput = CreateProductVariantSchema.parse({
+        weightValue: "750",
+        weightUnit: "ml",
+        purchasePrice: "6.50",
+        sellPrice: "14.99",
+        stock: "120",
+    });
+    console.assert(parsedVariantInput.weightValue === 750, "weightValue coerced to number");
+    console.assert(parsedVariantInput.purchasePrice === 6.5, "purchasePrice coerced to number");
+    console.assert(parsedVariantInput.sellPrice === 14.99, "sellPrice coerced to number");
+    console.assert(parsedVariantInput.stock === 120, "stock coerced to number");
+    console.assert(parsedVariantInput.isDefault === false, "isDefault defaults to false");
+    console.assert(parsedVariantInput.isActive === true, "isActive defaults to true");
+
+    let negativeWeightThrew = false;
+    try {
+        CreateProductVariantSchema.parse({
+            weightValue: -10,
+            weightUnit: "kg",
+            purchasePrice: 10,
+            sellPrice: 20,
+        });
+    } catch {
+        negativeWeightThrew = true;
+    }
+    console.assert(negativeWeightThrew, "CreateProductVariantSchema should reject negative weight");
+
+    let negativePriceThrew = false;
+    try {
+        CreateProductVariantSchema.parse({
+            weightValue: 1,
+            weightUnit: "kg",
+            purchasePrice: -5,
+            sellPrice: 20,
+        });
+    } catch {
+        negativePriceThrew = true;
+    }
+    console.assert(negativePriceThrew, "CreateProductVariantSchema should reject negative purchasePrice");
+    console.log("✔ CreateProductVariantSchema validated numeric constraints and defaults");
+
+    // UpdateProductVariantSchema partials
+    const updateVariantInput = UpdateProductVariantSchema.parse({
+        sellPrice: "19.99",
+        isDefault: true,
+    });
+    console.assert(updateVariantInput.sellPrice === 19.99, "Update schema accepts partial payload and coerces sellPrice");
+    console.assert(updateVariantInput.isDefault === true, "Update schema accepts partial isDefault flag");
+    console.log("✔ UpdateProductVariantSchema validated partial updates");
+
+    // Product with variants projection
+    const mockProduct = {
+        id: "a123e456-e89b-12d3-a456-426614174000",
+        name: "Insulated Water Bottle",
+        slug: "insulated-water-bottle",
+        shortDescription: "Stay hydrated",
+        description: "Vacuum insulated water bottle",
+        featuredImageUrl: "https://example.com/bottle.jpg",
+        images: [],
+        tags: ["bottle"],
+        status: "published" as const,
+        publishedAt: new Date(),
+        sellPrice: "12.99",
+        stock: "100",
+        searchVector: "raw-tsvector",
+        categories: [],
+        variants: [
+            {
+                id: "b123e456-e89b-12d3-a456-426614174001",
+                productId: "a123e456-e89b-12d3-a456-426614174000",
+                title: "500ml",
+                weightValue: 500,
+                weightUnit: "ml" as const,
+                sku: "bottle-500ml",
+                sellPrice: 12.99,
+                stock: 50,
+                isDefault: true,
+                isActive: true,
+                imageUrl: null,
+            },
+            {
+                id: "b123e456-e89b-12d3-a456-426614174002",
+                productId: "a123e456-e89b-12d3-a456-426614174000",
+                title: "1000ml",
+                weightValue: 1000,
+                weightUnit: "ml" as const,
+                sku: "bottle-1000ml",
+                sellPrice: 16.99,
+                stock: 50,
+                isDefault: false,
+                isActive: true,
+                imageUrl: null,
+            },
+        ],
+    };
+
+    const publicProduct = GetProductPublicSchema.parse(mockProduct);
+    console.assert(publicProduct.variants.length === 2, "Public product includes 2 variants");
+    console.assert(publicProduct.variants[0].title === "500ml", "First variant is 500ml");
+    console.assert(!("purchasePrice" in publicProduct.variants[0]), "Public variant does not expose purchasePrice");
+
+    const adminProduct = GetProductSchema.parse({
+        ...mockProduct,
+        purchasePrice: "5.00",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        deletedAt: null,
+        variants: mockProduct.variants.map((v) => ({
+            ...v,
+            purchasePrice: 4.5,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        })),
+    });
+    console.assert(adminProduct.variants.length === 2, "Admin product includes 2 variants");
+    console.assert(adminProduct.variants[0].purchasePrice === 4.5, "Admin variant exposes purchasePrice");
+
+    // Direct standalone variant schema parsing
+    const standalonePublic = ProductVariantPublicSchema.parse(mockProduct.variants[0]);
+    console.assert(standalonePublic.sku === "bottle-500ml", "ProductVariantPublicSchema parses single variant");
+    const standaloneAdmin = ProductVariantSchema.parse({
+        ...mockProduct.variants[0],
+        purchasePrice: 4.5,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+    });
+    console.assert(standaloneAdmin.purchasePrice === 4.5, "ProductVariantSchema parses single admin variant");
+
+    console.log("✔ Product schema variant projection (public vs admin) passed");
+
+    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, and Variant tests PASSED successfully! 🚀");
 }
 
 runTests();

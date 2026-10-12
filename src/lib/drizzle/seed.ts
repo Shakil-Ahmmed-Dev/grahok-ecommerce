@@ -1,7 +1,7 @@
 import { CreateProductSchema, type TCreateProductInput } from "@/features/products/types";
 import { slugify } from "@/lib/slug";
 import { db } from "./index";
-import { categoriesTable, productCategoriesTable, productsTable } from "./schemas/public";
+import { categoriesTable, productCategoriesTable, productsTable, productVariantsTable } from "./schemas/public";
 
 interface SeedProductItem extends Omit<TCreateProductInput, "categoryIds" | "primaryCategoryId"> {
     categorySlug: string;
@@ -82,7 +82,39 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "6.50",
         sellPrice: "14.99",
-        stock: "300"
+        stock: "300",
+        variants: [
+            {
+                title: "500ml",
+                weightValue: 500,
+                weightUnit: "ml",
+                purchasePrice: 5.0,
+                sellPrice: 12.99,
+                stock: 100,
+                isDefault: false,
+                isActive: true,
+            },
+            {
+                title: "750ml",
+                weightValue: 750,
+                weightUnit: "ml",
+                purchasePrice: 6.5,
+                sellPrice: 14.99,
+                stock: 120,
+                isDefault: true,
+                isActive: true,
+            },
+            {
+                title: "1000ml",
+                weightValue: 1000,
+                weightUnit: "ml",
+                purchasePrice: 8.0,
+                sellPrice: 18.99,
+                stock: 80,
+                isDefault: false,
+                isActive: true,
+            },
+        ],
     },
     {
         name: "Organic Cotton T-Shirt",
@@ -243,9 +275,12 @@ async function seed() {
             const { categorySlug, parentCategorySlug, ...productPayload } = item;
             const parsed = CreateProductSchema.parse(productPayload);
             const slug = slugify(parsed.slug ?? parsed.name);
+            const { categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, variants, ...productInsertData } = parsed;
+            void _categoryIds;
+            void _primaryCategoryId;
 
             const [insertedProduct] = await db.insert(productsTable).values({
-                ...parsed,
+                ...productInsertData,
                 slug,
             }).returning();
 
@@ -263,8 +298,31 @@ async function seed() {
             if (categoryLinks.length > 0) {
                 await db.insert(productCategoriesTable).values(categoryLinks);
             }
+
+            if (variants && variants.length > 0) {
+                for (let i = 0; i < variants.length; i++) {
+                    const v = variants[i];
+                    const sku = v.sku?.trim() || `${insertedProduct.slug}-${v.weightValue}${v.weightUnit}`.toLowerCase();
+                    const title = v.title?.trim() || `${v.weightValue}${v.weightUnit}`;
+                    const isDefault = v.isDefault ?? (i === 0);
+
+                    await db.insert(productVariantsTable).values({
+                        productId: insertedProduct.id,
+                        title,
+                        weightValue: v.weightValue,
+                        weightUnit: v.weightUnit,
+                        sku,
+                        purchasePrice: v.purchasePrice,
+                        sellPrice: v.sellPrice,
+                        stock: v.stock ?? 0,
+                        isDefault,
+                        isActive: v.isActive ?? true,
+                        imageUrl: v.imageUrl ?? null,
+                    });
+                }
+            }
         }
-        console.log(`Inserted ${dummyProducts.length} products with category associations.`);
+        console.log(`Inserted ${dummyProducts.length} products with category associations and variants.`);
     } else {
         console.log("Products table is already populated.");
     }

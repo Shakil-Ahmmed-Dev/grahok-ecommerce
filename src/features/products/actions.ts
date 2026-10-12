@@ -1,28 +1,34 @@
 import {
     AdminProductsListSchema,
+    CreateProductVariantSchema,
     GetProductPublicSchema,
     GetProductSchema,
     GetProductsPublicSchema,
     ProductsListSchema,
     ProductSuggestionsSchema,
+    ProductVariantSchema,
+    UpdateProductVariantSchema,
     type TAdminProductQuery,
     type TAdminProductsList,
     type TPaginationMeta,
     type TProductQuery,
     type TProductsList,
     type TCreateProductOutput,
+    type TCreateProductVariantInput,
     type TGetProduct,
     type TGetProductPublic,
     type TGetProductsPublic,
     type TProductModel,
     type TProductSlug,
+    type TProductVariant,
     type TUpdateProductOutput,
+    type TUpdateProductVariantInput,
     type TSuggestQuery,
     type TProductSuggestions,
 } from "./types";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
-import { categoriesTable, productCategoriesTable, productsTable } from "@/lib/drizzle/schemas/public";
+import { categoriesTable, productCategoriesTable, productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
 import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
@@ -59,10 +65,26 @@ const buildPaginationMeta = (
     };
 };
 
-function mapProductCategories<T extends { productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }> }>(
-    product: T
-) {
-    const { productCategories, ...rest } = product;
+function mapProductCategories<T extends {
+    productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }>;
+    variants?: Array<{
+        id: string;
+        productId: string;
+        title: string;
+        weightValue: string | number;
+        weightUnit: string;
+        sku: string;
+        purchasePrice?: string | number;
+        sellPrice: string | number;
+        stock: string | number;
+        isDefault: boolean;
+        isActive: boolean;
+        imageUrl: string | null;
+        createdAt?: Date | string;
+        updatedAt?: Date | string;
+    }>;
+}>(product: T) {
+    const { productCategories, variants, ...rest } = product;
     return {
         ...rest,
         categories: (productCategories ?? []).map((pc) => ({
@@ -70,6 +92,13 @@ function mapProductCategories<T extends { productCategories?: Array<{ isPrimary:
             name: pc.category.name,
             slug: pc.category.slug,
             isPrimary: pc.isPrimary,
+        })),
+        variants: (variants ?? []).map((v) => ({
+            ...v,
+            weightValue: Number(v.weightValue),
+            sellPrice: Number(v.sellPrice),
+            stock: Number(v.stock),
+            ...(v.purchasePrice !== undefined ? { purchasePrice: Number(v.purchasePrice) } : {}),
         })),
     };
 }
@@ -217,6 +246,10 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
                     category: true,
                 },
             },
+            variants: {
+                where: (variant, { eq }) => eq(variant.isActive, true),
+                orderBy: (variant, { asc }) => [asc(variant.weightValue)],
+            },
         },
     });
     if (!product) {
@@ -238,6 +271,9 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
                 with: {
                     category: true,
                 },
+            },
+            variants: {
+                orderBy: (variant, { asc }) => [asc(variant.weightValue)],
             },
         },
     });
@@ -364,7 +400,7 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         data.publishedAt = new Date();
     }
 
-    const { categoryIds, primaryCategoryId, ...productInsertData } = data;
+    const { categoryIds, primaryCategoryId, variants, ...productInsertData } = data;
 
     const explicitSlug = data.slug;
     const baseSlug = explicitSlug
@@ -410,6 +446,29 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         );
     }
 
+    if (variants && variants.length > 0) {
+        for (let i = 0; i < variants.length; i++) {
+            const v = variants[i];
+            const sku = v.sku?.trim() || `${product.slug}-${v.weightValue}${v.weightUnit}`.toLowerCase();
+            const title = v.title?.trim() || `${v.weightValue}${v.weightUnit}`;
+            const isDefault = v.isDefault ?? (i === 0);
+
+            await db.insert(productVariantsTable).values({
+                productId: product.id,
+                title,
+                weightValue: v.weightValue,
+                weightUnit: v.weightUnit,
+                sku,
+                purchasePrice: v.purchasePrice,
+                sellPrice: v.sellPrice,
+                stock: v.stock ?? 0,
+                isDefault,
+                isActive: v.isActive ?? true,
+                imageUrl: v.imageUrl ?? null,
+            });
+        }
+    }
+
     return product;
 };
 
@@ -449,7 +508,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             updateData = { ...updateData, slug: newSlug };
         }
 
-        const { categoryIds, primaryCategoryId, ...productUpdateData } = updateData;
+        const { categoryIds, primaryCategoryId, variants, ...productUpdateData } = updateData;
 
         if (categoryIds !== undefined) {
             await db.delete(productCategoriesTable).where(eq(productCategoriesTable.productId, existingProduct.id));
@@ -461,6 +520,33 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                         isPrimary: primaryCategoryId ? catId === primaryCategoryId : index === 0,
                     }))
                 );
+            }
+        }
+
+        if (variants !== undefined) {
+            await db.delete(productVariantsTable).where(eq(productVariantsTable.productId, existingProduct.id));
+            if (variants.length > 0) {
+                const targetSlug = updateData.slug ?? existingProduct.slug;
+                for (let i = 0; i < variants.length; i++) {
+                    const v = variants[i];
+                    const sku = v.sku?.trim() || `${targetSlug}-${v.weightValue}${v.weightUnit}`.toLowerCase();
+                    const title = v.title?.trim() || `${v.weightValue}${v.weightUnit}`;
+                    const isDefault = v.isDefault ?? (i === 0);
+
+                    await db.insert(productVariantsTable).values({
+                        productId: existingProduct.id,
+                        title,
+                        weightValue: v.weightValue,
+                        weightUnit: v.weightUnit,
+                        sku,
+                        purchasePrice: v.purchasePrice,
+                        sellPrice: v.sellPrice,
+                        stock: v.stock ?? 0,
+                        isDefault,
+                        isActive: v.isActive ?? true,
+                        imageUrl: v.imageUrl ?? null,
+                    });
+                }
             }
         }
 
@@ -736,6 +822,196 @@ const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promis
     return GetProductsPublicSchema.parse(relatedProducts.map(mapProductCategories));
 };
 
+const addVariantToProduct = async (
+    productSlug: TProductSlug,
+    input: TCreateProductVariantInput
+): Promise<TProductVariant> => {
+    const parsed = CreateProductVariantSchema.parse(input);
+
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true, slug: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const sku = parsed.sku?.trim() || `${product.slug}-${parsed.weightValue}${parsed.weightUnit}`.toLowerCase();
+    const title = parsed.title?.trim() || `${parsed.weightValue}${parsed.weightUnit}`;
+
+    const existingSku = await db.query.productVariantsTable.findFirst({
+        where: (v, { eq }) => eq(v.sku, sku),
+        columns: { id: true },
+    });
+    if (existingSku) {
+        throw new ConflictError(`Variant SKU '${sku}' is already in use`);
+    }
+
+    const existingWeight = await db.query.productVariantsTable.findFirst({
+        where: (v, { eq, and }) =>
+            and(
+                eq(v.productId, product.id),
+                eq(v.weightValue, parsed.weightValue),
+                eq(v.weightUnit, parsed.weightUnit)
+            ),
+        columns: { id: true },
+    });
+    if (existingWeight) {
+        throw new ConflictError(`A variant with weight ${parsed.weightValue}${parsed.weightUnit} already exists for this product`);
+    }
+
+    let isDefault = parsed.isDefault;
+    if (isDefault) {
+        await db
+            .update(productVariantsTable)
+            .set({ isDefault: false })
+            .where(eq(productVariantsTable.productId, product.id));
+    } else {
+        const existingCount = await db.$count(
+            productVariantsTable,
+            eq(productVariantsTable.productId, product.id)
+        );
+        if (existingCount === 0) {
+            isDefault = true;
+        }
+    }
+
+    const [variant] = await db
+        .insert(productVariantsTable)
+        .values({
+            productId: product.id,
+            title,
+            weightValue: parsed.weightValue,
+            weightUnit: parsed.weightUnit,
+            sku,
+            purchasePrice: parsed.purchasePrice,
+            sellPrice: parsed.sellPrice,
+            stock: parsed.stock,
+            isDefault,
+            isActive: parsed.isActive,
+            imageUrl: parsed.imageUrl ?? null,
+        })
+        .returning();
+
+    return ProductVariantSchema.parse({
+        ...variant,
+        weightValue: Number(variant.weightValue),
+        purchasePrice: Number(variant.purchasePrice),
+        sellPrice: Number(variant.sellPrice),
+        stock: Number(variant.stock),
+    });
+};
+
+const updateVariant = async (
+    productSlug: TProductSlug,
+    variantId: string,
+    input: TUpdateProductVariantInput
+): Promise<TProductVariant> => {
+    const parsed = UpdateProductVariantSchema.parse(input);
+
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true, slug: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const existingVariant = await db.query.productVariantsTable.findFirst({
+        where: (v, { eq, and }) => and(eq(v.id, variantId), eq(v.productId, product.id)),
+    });
+    if (!existingVariant) {
+        throw new NotFoundError("Variant not found on this product");
+    }
+
+    if (parsed.sku && parsed.sku !== existingVariant.sku) {
+        const skuTaken = await db.query.productVariantsTable.findFirst({
+            where: (v, { eq, and, ne }) => and(eq(v.sku, parsed.sku!), ne(v.id, variantId)),
+            columns: { id: true },
+        });
+        if (skuTaken) {
+            throw new ConflictError(`Variant SKU '${parsed.sku}' is already in use`);
+        }
+    }
+
+    const targetWeightValue = parsed.weightValue ?? Number(existingVariant.weightValue);
+    const targetWeightUnit = parsed.weightUnit ?? existingVariant.weightUnit;
+    if (
+        (parsed.weightValue !== undefined && parsed.weightValue !== Number(existingVariant.weightValue)) ||
+        (parsed.weightUnit !== undefined && parsed.weightUnit !== existingVariant.weightUnit)
+    ) {
+        const weightTaken = await db.query.productVariantsTable.findFirst({
+            where: (v, { eq, and, ne }) =>
+                and(
+                    eq(v.productId, product.id),
+                    eq(v.weightValue, targetWeightValue),
+                    eq(v.weightUnit, targetWeightUnit),
+                    ne(v.id, variantId)
+                ),
+            columns: { id: true },
+        });
+        if (weightTaken) {
+            throw new ConflictError(`A variant with weight ${targetWeightValue}${targetWeightUnit} already exists for this product`);
+        }
+    }
+
+    if (parsed.isDefault) {
+        await db
+            .update(productVariantsTable)
+            .set({ isDefault: false })
+            .where(eq(productVariantsTable.productId, product.id));
+    }
+
+    const [updated] = await db
+        .update(productVariantsTable)
+        .set(parsed)
+        .where(eq(productVariantsTable.id, variantId))
+        .returning();
+
+    return ProductVariantSchema.parse({
+        ...updated,
+        weightValue: Number(updated.weightValue),
+        purchasePrice: Number(updated.purchasePrice),
+        sellPrice: Number(updated.sellPrice),
+        stock: Number(updated.stock),
+    });
+};
+
+const deleteVariant = async (
+    productSlug: TProductSlug,
+    variantId: string
+): Promise<void> => {
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const existingVariant = await db.query.productVariantsTable.findFirst({
+        where: (v, { eq, and }) => and(eq(v.id, variantId), eq(v.productId, product.id)),
+    });
+    if (!existingVariant) {
+        throw new NotFoundError("Variant not found on this product");
+    }
+
+    await db.delete(productVariantsTable).where(eq(productVariantsTable.id, variantId));
+
+    if (existingVariant.isDefault) {
+        const nextVariant = await db.query.productVariantsTable.findFirst({
+            where: (v, { eq }) => eq(v.productId, product.id),
+            orderBy: (v, { asc }) => [asc(v.weightValue)],
+        });
+        if (nextVariant) {
+            await db
+                .update(productVariantsTable)
+                .set({ isDefault: true })
+                .where(eq(productVariantsTable.id, nextVariant.id));
+        }
+    }
+};
+
 const productsActions = {
     getProducts,
     getProductBySlug,
@@ -748,6 +1024,9 @@ const productsActions = {
     suggestProducts,
     getRelatedProducts,
     getProductFacets,
+    addVariantToProduct,
+    updateVariant,
+    deleteVariant,
 };
 
 export default productsActions;

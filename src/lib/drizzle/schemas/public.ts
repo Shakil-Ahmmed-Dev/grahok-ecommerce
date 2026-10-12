@@ -1,4 +1,4 @@
-import { PRODUCT_STATUSES } from "@/features/products/constants";
+import { PRODUCT_STATUSES, WEIGHT_UNITS } from "@/features/products/constants";
 import type { TProductImages, TProductTags } from "@/features/products/types";
 import { randomUUID } from "crypto";
 import { relations, sql, type SQL } from "drizzle-orm";
@@ -14,10 +14,12 @@ import {
     primaryKey,
     text,
     timestamp,
+    unique,
     uuid,
 } from "drizzle-orm/pg-core";
 
 export const productStatusEnum = pgEnum("product_status", PRODUCT_STATUSES);
+export const weightUnitEnum = pgEnum("weight_unit", WEIGHT_UNITS);
 
 export const tsvector = customType<{ data: string }>({
     dataType() {
@@ -115,6 +117,38 @@ export const productCategoriesTable = pgTable("product_categories", {
     index("product_categories_category_id_idx").on(table.categoryId),
 ]);
 
+export const productVariantsTable = pgTable("product_variants", {
+    id: uuid().primaryKey().$default(randomUUID),
+    productId: uuid("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
+    title: text().notNull(),
+    weightValue: numeric<"number">({
+        scale: 2,
+    }).notNull(),
+    weightUnit: weightUnitEnum("weight_unit").notNull(),
+    sku: text().notNull().unique(),
+    purchasePrice: numeric<"number">({
+        scale: 2,
+    }).notNull(),
+    sellPrice: numeric<"number">({
+        scale: 2,
+    }).notNull(),
+    stock: numeric<"number">({
+        scale: 2,
+    }).notNull().default(0),
+    isDefault: boolean("is_default").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    imageUrl: text(),
+    createdAt: timestamp().defaultNow().notNull(),
+    updatedAt: timestamp().defaultNow()
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+}, (table) => [
+    unique("product_variants_product_weight_unique").on(table.productId, table.weightValue, table.weightUnit),
+    index("product_variants_product_id_idx").on(table.productId),
+    index("product_variants_sku_idx").on(table.sku),
+    index("product_variants_product_active_idx").on(table.productId, table.isActive),
+]);
+
 export const categoriesRelations = relations(categoriesTable, ({ one, many }) => ({
     parent: one(categoriesTable, {
         fields: [categoriesTable.parentId],
@@ -129,6 +163,14 @@ export const categoriesRelations = relations(categoriesTable, ({ one, many }) =>
 
 export const productsRelations = relations(productsTable, ({ many }) => ({
     productCategories: many(productCategoriesTable),
+    variants: many(productVariantsTable),
+}));
+
+export const productVariantsRelations = relations(productVariantsTable, ({ one }) => ({
+    product: one(productsTable, {
+        fields: [productVariantsTable.productId],
+        references: [productsTable.id],
+    }),
 }));
 
 export const productCategoriesRelations = relations(productCategoriesTable, ({ one }) => ({
