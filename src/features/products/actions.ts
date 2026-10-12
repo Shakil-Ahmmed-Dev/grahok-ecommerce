@@ -29,7 +29,7 @@ import {
 import { BadRequestError, ConflictError, NotFoundError, PermanentRedirectError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
 import { categoriesTable, productCategoriesTable, productsTable, productSlugRedirectsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
-import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL, ne } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
     buildFuzzyOrderBy,
