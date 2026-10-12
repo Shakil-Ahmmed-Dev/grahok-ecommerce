@@ -2,6 +2,7 @@ import {
     AdminProductsListSchema,
     GetProductPublicSchema,
     GetProductSchema,
+    GetProductsPublicSchema,
     ProductsListSchema,
     ProductSuggestionsSchema,
     type TAdminProductQuery,
@@ -12,6 +13,7 @@ import {
     type TCreateProductOutput,
     type TGetProduct,
     type TGetProductPublic,
+    type TGetProductsPublic,
     type TProductModel,
     type TProductSlug,
     type TUpdateProductOutput,
@@ -20,10 +22,12 @@ import {
 } from "./types";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
-import { productsTable } from "@/lib/drizzle/schemas/public";
+import { categoriesTable, productCategoriesTable, productsTable } from "@/lib/drizzle/schemas/public";
 import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
+    buildFuzzyOrderBy,
+    buildFuzzySearchCondition,
     buildProductConditions,
     buildProductOrderBy,
     buildProductSearchQuery,
@@ -55,6 +59,21 @@ const buildPaginationMeta = (
     };
 };
 
+function mapProductCategories<T extends { productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }> }>(
+    product: T
+) {
+    const { productCategories, ...rest } = product;
+    return {
+        ...rest,
+        categories: (productCategories ?? []).map((pc) => ({
+            id: pc.category.id,
+            name: pc.category.name,
+            slug: pc.category.slug,
+            isPrimary: pc.isPrimary,
+        })),
+    };
+}
+
 const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     const searchQuery = buildProductSearchQuery(query.search);
     const effectiveSort = resolveProductSort(query);
@@ -78,7 +97,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     const offset = isCursorMode ? undefined : (query.page - 1) * query.pageSize;
     const shouldComputeFacets = query.includeFacets ?? (query.page === 1 && !isCursorMode && query.pageSize >= 10);
 
-    const [rawProducts, total, facets] = await Promise.all([
+    let [rawProducts, total, facets] = await Promise.all([
         db.query.productsTable.findMany({
             where: queryConditions,
             orderBy,
@@ -90,10 +109,60 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
                 deletedAt: false,
                 searchVector: false,
             },
+            with: {
+                productCategories: {
+                    with: {
+                        category: true,
+                    },
+                },
+            },
         }),
         isCursorMode ? Promise.resolve(undefined) : db.$count(productsTable, baseConditions),
         shouldComputeFacets ? getProductFacets(baseConditions) : Promise.resolve(undefined),
     ]);
+
+    if (query.search && rawProducts.length === 0 && (!total || total === 0)) {
+        const fuzzyCondition = buildFuzzySearchCondition(query.search);
+        if (fuzzyCondition) {
+            const fuzzyBaseConditions = buildProductConditions(query, "public", null, null, fuzzyCondition);
+            const fuzzyQueryConditions = buildProductConditions(query, "public", null, cursorCondition, fuzzyCondition);
+            const fuzzyOrderBy = effectiveSort === "relevance"
+                ? buildFuzzyOrderBy(query.search, query.sortOrder)
+                : orderBy;
+
+            const [fuzzyRawProducts, fuzzyTotal, fuzzyFacets] = await Promise.all([
+                db.query.productsTable.findMany({
+                    where: fuzzyQueryConditions,
+                    orderBy: fuzzyOrderBy,
+                    offset,
+                    limit,
+                    columns: {
+                        purchasePrice: false,
+                        updatedAt: false,
+                        deletedAt: false,
+                        searchVector: false,
+                    },
+                    with: {
+                        productCategories: {
+                            with: {
+                                category: true,
+                            },
+                        },
+                    },
+                }),
+                isCursorMode ? Promise.resolve(undefined) : db.$count(productsTable, fuzzyBaseConditions),
+                shouldComputeFacets ? getProductFacets(fuzzyBaseConditions) : Promise.resolve(undefined),
+            ]);
+
+            if (fuzzyRawProducts.length > 0) {
+                rawProducts = fuzzyRawProducts;
+                total = fuzzyTotal;
+                if (fuzzyFacets) {
+                    facets = fuzzyFacets;
+                }
+            }
+        }
+    }
 
     const hasNextPage = rawProducts.length > query.pageSize;
     const products = hasNextPage ? rawProducts.slice(0, query.pageSize) : rawProducts;
@@ -114,7 +183,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     );
 
     return ProductsListSchema.parse({
-        data: products,
+        data: products.map(mapProductCategories),
         meta,
         ...(facets ? { facets } : {}),
     });
@@ -141,12 +210,19 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
             updatedAt: false,
             deletedAt: false,
             searchVector: false,
-        }
+        },
+        with: {
+            productCategories: {
+                with: {
+                    category: true,
+                },
+            },
+        },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
     }
-    return GetProductPublicSchema.parse(product);
+    return GetProductPublicSchema.parse(mapProductCategories(product));
 };
 
 const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> => {
@@ -156,12 +232,19 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
         },
         columns: {
             searchVector: false,
-        }
+        },
+        with: {
+            productCategories: {
+                with: {
+                    category: true,
+                },
+            },
+        },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
     }
-    return GetProductSchema.parse(product);
+    return GetProductSchema.parse(mapProductCategories(product));
 };
 
 const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProductsList> => {
@@ -187,7 +270,7 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
     const offset = isCursorMode ? undefined : (query.page - 1) * query.pageSize;
     const shouldComputeFacets = query.includeFacets ?? (query.page === 1 && !isCursorMode && query.pageSize >= 10);
 
-    const [rawProducts, total, facets] = await Promise.all([
+    let [rawProducts, total, facets] = await Promise.all([
         db.query.productsTable.findMany({
             where: queryConditions,
             orderBy,
@@ -196,10 +279,57 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
             columns: {
                 searchVector: false,
             },
+            with: {
+                productCategories: {
+                    with: {
+                        category: true,
+                    },
+                },
+            },
         }),
         isCursorMode ? Promise.resolve(undefined) : db.$count(productsTable, baseConditions),
         shouldComputeFacets ? getProductFacets(baseConditions) : Promise.resolve(undefined),
     ]);
+
+    if (query.search && rawProducts.length === 0 && (!total || total === 0)) {
+        const fuzzyCondition = buildFuzzySearchCondition(query.search);
+        if (fuzzyCondition) {
+            const fuzzyBaseConditions = buildProductConditions(query, "admin", null, null, fuzzyCondition);
+            const fuzzyQueryConditions = buildProductConditions(query, "admin", null, cursorCondition, fuzzyCondition);
+            const fuzzyOrderBy = effectiveSort === "relevance"
+                ? buildFuzzyOrderBy(query.search, query.sortOrder)
+                : orderBy;
+
+            const [fuzzyRawProducts, fuzzyTotal, fuzzyFacets] = await Promise.all([
+                db.query.productsTable.findMany({
+                    where: fuzzyQueryConditions,
+                    orderBy: fuzzyOrderBy,
+                    offset,
+                    limit,
+                    columns: {
+                        searchVector: false,
+                    },
+                    with: {
+                        productCategories: {
+                            with: {
+                                category: true,
+                            },
+                        },
+                    },
+                }),
+                isCursorMode ? Promise.resolve(undefined) : db.$count(productsTable, fuzzyBaseConditions),
+                shouldComputeFacets ? getProductFacets(fuzzyBaseConditions) : Promise.resolve(undefined),
+            ]);
+
+            if (fuzzyRawProducts.length > 0) {
+                rawProducts = fuzzyRawProducts;
+                total = fuzzyTotal;
+                if (fuzzyFacets) {
+                    facets = fuzzyFacets;
+                }
+            }
+        }
+    }
 
     const hasNextPage = rawProducts.length > query.pageSize;
     const products = hasNextPage ? rawProducts.slice(0, query.pageSize) : rawProducts;
@@ -220,7 +350,7 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
     );
 
     return AdminProductsListSchema.parse({
-        data: products,
+        data: products.map(mapProductCategories),
         meta,
         ...(facets ? { facets } : {}),
     });
@@ -233,6 +363,8 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
     if (data.status === "published" && !data.publishedAt) {
         data.publishedAt = new Date();
     }
+
+    const { categoryIds, primaryCategoryId, ...productInsertData } = data;
 
     const explicitSlug = data.slug;
     const baseSlug = explicitSlug
@@ -266,7 +398,18 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         }
     }
 
-    const [product] = await db.insert(productsTable).values({ ...data, slug }).returning();
+    const [product] = await db.insert(productsTable).values({ ...productInsertData, slug }).returning();
+
+    if (categoryIds && categoryIds.length > 0) {
+        await db.insert(productCategoriesTable).values(
+            categoryIds.map((catId, index) => ({
+                productId: product.id,
+                categoryId: catId,
+                isPrimary: primaryCategoryId ? catId === primaryCategoryId : index === 0,
+            }))
+        );
+    }
+
     return product;
 };
 
@@ -277,7 +420,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
         },
     });
     if (existingProduct) {
-        let updateData = data;
+        let updateData = { ...data };
 
         const targetStatus = updateData.status ?? existingProduct.status;
         const targetPublishedAt = updateData.publishedAt !== undefined ? updateData.publishedAt : existingProduct.publishedAt;
@@ -306,8 +449,23 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             updateData = { ...updateData, slug: newSlug };
         }
 
+        const { categoryIds, primaryCategoryId, ...productUpdateData } = updateData;
+
+        if (categoryIds !== undefined) {
+            await db.delete(productCategoriesTable).where(eq(productCategoriesTable.productId, existingProduct.id));
+            if (categoryIds.length > 0) {
+                await db.insert(productCategoriesTable).values(
+                    categoryIds.map((catId, index) => ({
+                        productId: existingProduct.id,
+                        categoryId: catId,
+                        isPrimary: primaryCategoryId ? catId === primaryCategoryId : index === 0,
+                    }))
+                );
+            }
+        }
+
         const [product] = await db.update(productsTable)
-            .set(updateData)
+            .set(productUpdateData)
             .where(and(eq(productsTable.slug, slug), isNull(productsTable.deletedAt)))
             .returning();
 
@@ -368,7 +526,7 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
         productConditions.push(sql`${productsTable.name} ILIKE ${`%${trimmed}%`}`);
     }
 
-    const [matchedProducts, matchedCategories, matchedTags] = await Promise.all([
+    const [initialProducts, initialCategories, matchedTags] = await Promise.all([
         db.query.productsTable.findMany({
             where: and(...productConditions),
             orderBy: searchQuery
@@ -379,19 +537,26 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
                 id: true,
                 name: true,
                 slug: true,
-                category: true,
                 sellPrice: true,
                 featuredImageUrl: true,
             },
+            with: {
+                productCategories: {
+                    with: {
+                        category: true,
+                    },
+                },
+            },
         }),
-        db.execute(sql`
-            SELECT DISTINCT ${productsTable.category} AS name
-            FROM ${productsTable}
-            WHERE (${productsTable.status} = 'published' OR (${productsTable.status} = 'scheduled' AND ${productsTable.publishedAt} <= NOW()))
-              AND ${productsTable.deletedAt} IS NULL
-              AND ${productsTable.category} ILIKE ${`%${trimmed}%`}
-            LIMIT 3
-        `),
+        db.query.categoriesTable.findMany({
+            where: (cat, { ilike }) => ilike(cat.name, `%${trimmed}%`),
+            limit: 3,
+            columns: {
+                id: true,
+                name: true,
+                slug: true,
+            },
+        }),
         db.execute(sql`
             SELECT DISTINCT tag
             FROM ${productsTable}, jsonb_array_elements_text(coalesce(${productsTable.tags}, '[]'::jsonb)) AS tag
@@ -402,21 +567,173 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
         `),
     ]);
 
-    const categories = (matchedCategories.rows as Array<{ name: string }>).map((r) => r.name);
+    let matchedProducts = initialProducts;
+    let matchedCategories = initialCategories;
+
+    // Trigram fuzzy fallback for product suggestions if exact prefix search yielded 0 matches
+    if (matchedProducts.length === 0) {
+        matchedProducts = await db.query.productsTable.findMany({
+            where: and(
+                isNull(productsTable.deletedAt),
+                or(
+                    eq(productsTable.status, "published"),
+                    and(
+                        eq(productsTable.status, "scheduled"),
+                        lte(productsTable.publishedAt, sql`NOW()`)
+                    )
+                )!,
+                sql`(${productsTable.name} % ${trimmed} OR word_similarity(${trimmed}, ${productsTable.name}) > 0.25)`
+            ),
+            orderBy: [desc(sql`greatest(similarity(${productsTable.name}, ${trimmed}), word_similarity(${trimmed}, ${productsTable.name}))`)],
+            limit: Math.min(query.limit, 5),
+            columns: {
+                id: true,
+                name: true,
+                slug: true,
+                sellPrice: true,
+                featuredImageUrl: true,
+            },
+            with: {
+                productCategories: {
+                    with: {
+                        category: true,
+                    },
+                },
+            },
+        });
+    }
+
+    // Trigram fuzzy fallback for categories if prefix match yielded 0 matches
+    if (matchedCategories.length === 0) {
+        matchedCategories = await db.query.categoriesTable.findMany({
+            where: sql`(${categoriesTable.name} % ${trimmed} OR word_similarity(${trimmed}, ${categoriesTable.name}) > 0.25)`,
+            orderBy: [desc(sql`greatest(similarity(${categoriesTable.name}, ${trimmed}), word_similarity(${trimmed}, ${categoriesTable.name}))`)],
+            limit: 3,
+            columns: {
+                id: true,
+                name: true,
+                slug: true,
+            },
+        });
+    }
+
     const tags = (matchedTags.rows as Array<{ tag: string }>).map((r) => r.tag);
 
     return ProductSuggestionsSchema.parse({
-        products: matchedProducts.map((p) => ({
-            id: p.id,
-            name: p.name,
-            slug: p.slug,
-            category: p.category,
-            sellPrice: Number(p.sellPrice),
-            featuredImageUrl: p.featuredImageUrl,
+        products: matchedProducts.map((p) => {
+            const primaryCat = p.productCategories.find((pc) => pc.isPrimary)?.category?.name
+                ?? p.productCategories[0]?.category?.name;
+            return {
+                id: p.id,
+                name: p.name,
+                slug: p.slug,
+                category: primaryCat,
+                sellPrice: Number(p.sellPrice),
+                featuredImageUrl: p.featuredImageUrl,
+            };
+        }),
+        categories: matchedCategories.map((c) => ({
+            id: c.id,
+            name: c.name,
+            slug: c.slug,
         })),
-        categories,
         tags,
     });
+};
+
+const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promise<TGetProductsPublic> => {
+    const sourceProduct = await db.query.productsTable.findFirst({
+        where: (product, { eq, and, or, lte, isNull }) =>
+            and(
+                eq(product.slug, slug),
+                isNull(product.deletedAt),
+                or(
+                    eq(product.status, "published"),
+                    and(
+                        eq(product.status, "scheduled"),
+                        lte(product.publishedAt, sql`NOW()`)
+                    )
+                )
+            ),
+        columns: {
+            id: true,
+            tags: true,
+        },
+        with: {
+            productCategories: true,
+        },
+    });
+
+    if (!sourceProduct) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const categoryIds = sourceProduct.productCategories.map((pc) => pc.categoryId);
+    const primaryCategoryId = sourceProduct.productCategories.find((pc) => pc.isPrimary)?.categoryId ?? categoryIds[0];
+    const tags = Array.isArray(sourceProduct.tags) ? (sourceProduct.tags as string[]) : [];
+
+    const effectiveLimit = Math.min(Math.max(1, limit), 20);
+
+    const hasCategories = categoryIds.length > 0;
+    const hasTags = tags.length > 0;
+
+    const catScoreSql = hasCategories
+        ? sql`COALESCE((
+            SELECT SUM(CASE WHEN pc.category_id = ${primaryCategoryId} THEN 5 ELSE 3 END)
+            FROM ${productCategoriesTable} pc
+            WHERE pc.product_id = ${productsTable.id} AND pc.category_id = ANY(${categoryIds})
+          ), 0)`
+        : sql`0`;
+
+    const tagScoreSql = hasTags
+        ? sql`COALESCE((
+            SELECT count(*)::int
+            FROM jsonb_array_elements_text(coalesce(${productsTable.tags}, '[]'::jsonb)) t
+            WHERE t = ANY(${tags})
+          ), 0)`
+        : sql`0`;
+
+    const stockScoreSql = sql`(CASE WHEN ${productsTable.stock} > 0 THEN 2 ELSE 0 END)`;
+
+    const candidateIdsResult = await db.execute(sql`
+        SELECT ${productsTable.id} AS id
+        FROM ${productsTable}
+        WHERE ${productsTable.id} != ${sourceProduct.id}
+          AND ${productsTable.deletedAt} IS NULL
+          AND (${productsTable.status} = 'published' OR (${productsTable.status} = 'scheduled' AND ${productsTable.publishedAt} <= NOW()))
+        ORDER BY (${catScoreSql} + ${tagScoreSql} + ${stockScoreSql}) DESC,
+                 ${productsTable.publishedAt} DESC NULLS LAST,
+                 ${productsTable.createdAt} DESC
+        LIMIT ${effectiveLimit};
+    `);
+
+    const candidateIds = (candidateIdsResult.rows as Array<{ id: string }>).map((r) => r.id);
+
+    if (candidateIds.length === 0) {
+        return [];
+    }
+
+    const relatedProducts = await db.query.productsTable.findMany({
+        where: (product, { inArray }) => inArray(product.id, candidateIds),
+        columns: {
+            purchasePrice: false,
+            updatedAt: false,
+            deletedAt: false,
+            searchVector: false,
+        },
+        with: {
+            productCategories: {
+                with: {
+                    category: true,
+                },
+            },
+        },
+    });
+
+    const idOrderMap = new Map(candidateIds.map((id, index) => [id, index]));
+    relatedProducts.sort((a, b) => (idOrderMap.get(a.id) ?? 0) - (idOrderMap.get(b.id) ?? 0));
+
+    return GetProductsPublicSchema.parse(relatedProducts.map(mapProductCategories));
 };
 
 const productsActions = {
@@ -429,6 +746,7 @@ const productsActions = {
     deleteProductBySlug,
     restoreProductBySlug,
     suggestProducts,
+    getRelatedProducts,
     getProductFacets,
 };
 

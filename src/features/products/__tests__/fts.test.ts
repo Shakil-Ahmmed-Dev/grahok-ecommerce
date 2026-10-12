@@ -2,6 +2,8 @@ import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import {
     buildProductSearchQuery,
+    buildFuzzySearchCondition,
+    buildFuzzyOrderBy,
     resolveProductSort,
     buildProductConditions,
     buildProductOrderBy,
@@ -17,6 +19,7 @@ import {
     ProductFacetsSchema,
     ProductSuggestionsSchema,
     SuggestQuerySchema,
+    RelatedProductsQuerySchema,
     ProductQuerySchema,
     ProductsListSchema,
 } from "@/features/products/types";
@@ -83,7 +86,6 @@ function runTests() {
     console.log("✔ Special characters compiled safely without errors");
 
     console.log("\n=== 2. Testing Effective Sort Resolution ===");
-    // Table of behavior:
     console.assert(resolveProductSort({}) === "createdAt", "No search, no sort => createdAt");
     console.assert(resolveProductSort({ search: "headphone" }) === "relevance", "Search, no sort => relevance");
     console.assert(resolveProductSort({ search: "headphone", sortBy: "relevance" }) === "relevance", "Search + relevance => relevance");
@@ -95,11 +97,12 @@ function runTests() {
 
     console.log("\n=== 3. Testing Condition & Order Builders ===");
     const searchQ = buildProductSearchQuery("headphones");
-    const conds = buildProductConditions({ search: "headphones" }, "public", searchQ);
+    const conds = buildProductConditions({ search: "headphones", category: "audio" }, "public", searchQ);
     const condSql = dialect.sqlToQuery(sql`${conds}`);
     console.assert(condSql.sql.includes('"search_vector" @@'), "Conditions must include search_vector @@ query");
     console.assert(condSql.sql.includes('"status" ='), "Conditions must include status check");
-    console.log("✔ Condition builder generates FTS @@ predicate and status lifecycle:", condSql.sql);
+    console.assert(condSql.sql.includes("WITH RECURSIVE cat_tree"), "Conditions must include recursive category subtree match");
+    console.log("✔ Condition builder generates FTS predicate, status lifecycle, and recursive category matching:", condSql.sql);
 
     const orderRelevance = buildProductOrderBy("relevance", "desc", searchQ);
     const orderSql = dialect.sqlToQuery(sql`${orderRelevance[0]}`);
@@ -112,13 +115,10 @@ function runTests() {
     console.log("✔ Order builder generates publishedAt order correctly:", orderPublishedSql.sql);
 
     console.log("\n=== 4. Testing Schema Projection Safety ===");
-    // Ensure searchVector cannot be parsed or present in output
     const dummyProduct = {
         id: "123e4567-e89b-12d3-a456-426614174000",
         name: "Wireless Headphones",
         slug: "wireless-headphones",
-        category: "Electronics",
-        subcategory: "Audio",
         shortDescription: "Premium wireless noise-cancelling headphones",
         description: "Experience world-class noise cancellation with 30 hours of battery life.",
         tags: ["audio"],
@@ -129,12 +129,21 @@ function runTests() {
         status: "published" as const,
         publishedAt: new Date(),
         searchVector: "some-raw-tsvector-data",
+        categories: [
+            {
+                id: "c123e456-e89b-12d3-a456-426614174000",
+                name: "Audio",
+                slug: "audio",
+                isPrimary: true,
+            },
+        ],
     };
 
     const parsedPublic = GetProductPublicSchema.parse(dummyProduct);
     console.assert(!("searchVector" in parsedPublic), "GetProductPublicSchema must strip searchVector");
     console.assert(!("purchasePrice" in parsedPublic), "GetProductPublicSchema must strip purchasePrice");
     console.assert(parsedPublic.status === "published", "GetProductPublicSchema retains status");
+    console.assert(parsedPublic.categories.length === 1 && parsedPublic.categories[0].name === "Audio", "GetProductPublicSchema retains categories");
 
     const parsedAdmin = GetProductSchema.parse({
         ...dummyProduct,
@@ -145,7 +154,8 @@ function runTests() {
     });
     console.assert(!("searchVector" in parsedAdmin), "GetProductSchema must strip searchVector");
     console.assert(Number(parsedAdmin.purchasePrice) === 50, "GetProductSchema retains purchasePrice");
-    console.log("✔ searchVector successfully stripped from all external schema projections");
+    console.assert(parsedAdmin.categories.length === 1, "GetProductSchema retains categories");
+    console.log("✔ Schema projections safely parse product and relational categories");
 
     // Test ProductSortSchema parsing
     const parsedDefault = ProductSortSchema.parse({});
@@ -167,13 +177,11 @@ function runTests() {
     console.assert(decoded?.id === testId, "Decoded ID must match original ID");
     console.log("✔ Cursor roundtrip encoding/decoding passed");
 
-    // Invalid cursors
     console.assert(decodeCursor("invalid-base64!!!") === null, "Malformed base64 should return null");
     console.assert(decodeCursor(Buffer.from(JSON.stringify({ notCreatedAt: "x" })).toString("base64url")) === null, "Invalid cursor payload should return null");
     console.assert(decodeCursor(Buffer.from(JSON.stringify({ createdAt: "not-a-date", id: "123" })).toString("base64url")) === null, "Invalid date string should return null");
     console.log("✔ Malformed cursor error handling passed");
 
-    // Cursor SQL condition
     const cursorConditionDesc = buildCursorCondition({ createdAt: testDate, id: testId }, "desc");
     const cursorSqlDesc = dialect.sqlToQuery(cursorConditionDesc);
     console.assert(cursorSqlDesc.sql.includes("<") && cursorSqlDesc.sql.includes("="), "Desc cursor condition must generate tuple seek");
@@ -186,8 +194,7 @@ function runTests() {
 
     console.log("\n=== 6. Testing Facet Schemas & Query Parsing ===");
     const dummyFacets = {
-        categories: [{ name: "Electronics", count: 42 }],
-        subcategories: [{ name: "Audio", count: 18 }],
+        categories: [{ id: "c1", name: "Electronics", slug: "electronics", count: 42 }],
         tags: [{ name: "wireless", count: 15 }],
         priceRange: { min: 19.99, max: 299.99 },
     };
@@ -219,11 +226,14 @@ function runTests() {
             id: testId,
             name: "Wireless Headphones",
             slug: "wireless-headphones",
-            category: "Electronics",
+            category: "Audio",
             sellPrice: 99.99,
             featuredImageUrl: "https://example.com/img.jpg",
         }],
-        categories: ["Electronics", "Audio"],
+        categories: [
+            { id: "c1", name: "Electronics", slug: "electronics" },
+            { id: "c2", name: "Audio", slug: "audio" },
+        ],
         tags: ["wireless", "audio"],
     };
     const parsedSuggestions = ProductSuggestionsSchema.parse(dummySuggestions);
@@ -239,7 +249,54 @@ function runTests() {
     console.assert(Array.isArray(parsedQuery.tags) && parsedQuery.tags.length === 2, "Multi-tag array parsed");
     console.log("✔ parseProductQuery with includeFacets, cursor, and multi-tags passed");
 
-    console.log("\nAll Full-Text Search, Facets, and Cursor tests PASSED successfully! 🚀");
+    console.log("\n=== 9. Testing Typo-Tolerance & Fuzzy Search Builders ===");
+    console.assert(buildFuzzySearchCondition(undefined) === null, "Fuzzy condition with undefined returns null");
+    console.assert(buildFuzzySearchCondition("   ") === null, "Fuzzy condition with whitespace returns null");
+
+    const fuzzyCond = buildFuzzySearchCondition("samnsung");
+    console.assert(fuzzyCond !== null, "Fuzzy condition should be generated");
+    const fuzzyCondSql = dialect.sqlToQuery(fuzzyCond!);
+    console.assert(
+        fuzzyCondSql.sql.includes("%") && fuzzyCondSql.sql.includes("word_similarity"),
+        "Fuzzy search SQL should include trigram % and word_similarity operators"
+    );
+    console.assert(fuzzyCondSql.params.includes("samnsung"), "Fuzzy condition should include search term");
+    console.log("✔ Fuzzy condition builder generates trigram predicate:", fuzzyCondSql.sql, fuzzyCondSql.params);
+
+    const fuzzyOrder = buildFuzzyOrderBy("samnsung", "desc");
+    const fuzzyOrderSql = dialect.sqlToQuery(sql`${fuzzyOrder[0]}`);
+    console.assert(
+        fuzzyOrderSql.sql.includes("similarity") && fuzzyOrderSql.sql.includes("word_similarity"),
+        "Fuzzy order should rank by similarity and word_similarity"
+    );
+    console.log("✔ Fuzzy order builder generates similarity rank order:", fuzzyOrderSql.sql);
+
+    const fuzzyProductConds = buildProductConditions({ search: "samnsung" }, "public", null, null, fuzzyCond);
+    const fuzzyProductCondsSql = dialect.sqlToQuery(sql`${fuzzyProductConds}`);
+    console.assert(
+        !fuzzyProductCondsSql.sql.includes("search_vector @@") && fuzzyProductCondsSql.sql.includes("%"),
+        "Fuzzy fallback conditions must use trigram instead of search_vector"
+    );
+    console.log("✔ Condition builder generates fuzzy fallback predicate correctly");
+
+    console.log("\n=== 10. Testing Related Products Query & Schema ===");
+    const defaultRelatedQuery = RelatedProductsQuerySchema.parse({});
+    console.assert(defaultRelatedQuery.limit === 8, "Related products limit defaults to 8");
+
+    const customRelatedQuery = RelatedProductsQuerySchema.parse({ limit: "12" });
+    console.assert(customRelatedQuery.limit === 12, "Related products limit coerces string to number");
+
+    let limitOverflowThrew = false;
+    try {
+        RelatedProductsQuerySchema.parse({ limit: "25" });
+    } catch {
+        limitOverflowThrew = true;
+    }
+    console.assert(limitOverflowThrew, "Related products limit > 20 should throw validation error");
+    console.log("✔ RelatedProductsQuerySchema validates limits and constraints");
+
+    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, and Recommendation tests PASSED successfully! 🚀");
 }
 
 runTests();
+

@@ -21,23 +21,39 @@ export type TProductSlug = z.infer<typeof ProductSlugSchema>;
 export const ProductStatusSchema = z.enum(PRODUCT_STATUSES);
 export type TProductStatus = z.infer<typeof ProductStatusSchema>;
 
+export const ProductCategoryItemSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string(),
+    isPrimary: z.boolean(),
+});
+export type TProductCategoryItem = z.infer<typeof ProductCategoryItemSchema>;
+
 export const ProductModelSchema = createSelectSchema(productsTable);
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 
-export const GetProductSchema = ProductModelSchema.omit({
+export const GetProductBaseSchema = ProductModelSchema.omit({
     searchVector: true,
+});
+
+export const GetProductSchema = GetProductBaseSchema.extend({
+    categories: z.array(ProductCategoryItemSchema).default([]),
 });
 export type TGetProduct = z.infer<typeof GetProductSchema>;
 
 export const GetProductsSchema = GetProductSchema.array();
 export type TGetProducts = z.infer<typeof GetProductsSchema>;
 
-export const GetProductPublicSchema = ProductModelSchema.omit({
+export const GetProductPublicBaseSchema = ProductModelSchema.omit({
     purchasePrice: true,
     createdAt: true,
     updatedAt: true,
     deletedAt: true,
     searchVector: true,
+});
+
+export const GetProductPublicSchema = GetProductPublicBaseSchema.extend({
+    categories: z.array(ProductCategoryItemSchema).default([]),
 });
 export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
 
@@ -45,7 +61,9 @@ export const GetProductsPublicSchema = GetProductPublicSchema.array();
 export type TGetProductsPublic = z.infer<typeof GetProductsPublicSchema>;
 
 export const CategoryFacetSchema = z.object({
+    id: z.string(),
     name: z.string(),
+    slug: z.string(),
     count: z.number().int().nonnegative(),
 });
 export type TCategoryFacet = z.infer<typeof CategoryFacetSchema>;
@@ -64,7 +82,6 @@ export type TPriceRangeFacet = z.infer<typeof PriceRangeFacetSchema>;
 
 export const ProductFacetsSchema = z.object({
     categories: z.array(CategoryFacetSchema),
-    subcategories: z.array(CategoryFacetSchema),
     tags: z.array(TagFacetSchema),
     priceRange: PriceRangeFacetSchema,
 });
@@ -113,13 +130,15 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
     status: ProductStatusSchema.default(ProductStatusSchema.enum.draft),
     publishedAt: z.coerce.date().optional().nullable(),
+}).extend({
+    categoryIds: z.array(z.string().trim().min(1)).optional(),
+    primaryCategoryId: z.string().trim().min(1).optional(),
 }).omit({ deletedAt: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
 
-
 export const UpdateProductSchema = z.object({
-    data: CreateProductSchema.partial()
+    data: CreateProductSchema.partial(),
 });
 export type TUpdateProductInput = z.input<typeof UpdateProductSchema>;
 export type TUpdateProductOutput = z.output<typeof UpdateProductSchema>;
@@ -144,7 +163,6 @@ export type TProductSort = z.infer<typeof ProductSortSchema>;
 export const ProductFilterSchema = z.object({
     search: z.string().trim().min(1).max(100).optional(),
     category: z.string().trim().min(1).max(100).optional(),
-    subcategory: z.string().trim().min(1).max(100).optional(),
     tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
     minPrice: z.coerce.number<string>().nonnegative("Minimum price must be a non-negative number").optional(),
     maxPrice: z.coerce.number<string>().nonnegative("Maximum price must be a non-negative number").optional(),
@@ -170,15 +188,22 @@ export const ProductSuggestionItemSchema = z.object({
     id: z.string(),
     name: z.string(),
     slug: z.string(),
-    category: z.string(),
+    category: z.string().optional(),
     sellPrice: z.number(),
     featuredImageUrl: z.string(),
 });
 export type TProductSuggestionItem = z.infer<typeof ProductSuggestionItemSchema>;
 
+export const CategorySuggestionItemSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string(),
+});
+export type TCategorySuggestionItem = z.infer<typeof CategorySuggestionItemSchema>;
+
 export const ProductSuggestionsSchema = z.object({
     products: z.array(ProductSuggestionItemSchema),
-    categories: z.array(z.string()),
+    categories: z.array(CategorySuggestionItemSchema),
     tags: z.array(z.string()),
 });
 export type TProductSuggestions = z.infer<typeof ProductSuggestionsSchema>;
@@ -188,3 +213,9 @@ export const SuggestQuerySchema = z.object({
     limit: z.coerce.number<string>().int().positive("Limit must be positive").max(20, "Limit cannot exceed 20").default(8),
 });
 export type TSuggestQuery = z.infer<typeof SuggestQuerySchema>;
+
+export const RelatedProductsQuerySchema = z.object({
+    limit: z.coerce.number<string>().int().positive("Limit must be positive").max(20, "Limit cannot exceed 20").default(8),
+});
+export type TRelatedProductsQuery = z.infer<typeof RelatedProductsQuerySchema>;
+

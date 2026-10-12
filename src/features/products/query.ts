@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, gte, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import z from "zod";
-import { productsTable } from "@/lib/drizzle/schemas/public";
+import { categoriesTable, productCategoriesTable, productsTable } from "@/lib/drizzle/schemas/public";
 import { db } from "@/lib/drizzle";
 import { ProductFacetsSchema, type TProductFacets, type TProductSort, type TProductStatus } from "./types";
 
@@ -47,7 +47,6 @@ export const buildCursorCondition = (
 export interface TProductFilterFields {
     search?: string;
     category?: string;
-    subcategory?: string;
     tags?: string[];
     minPrice?: number;
     maxPrice?: number;
@@ -79,6 +78,30 @@ export const buildProductSearchQuery = (search: string | undefined): SQL | null 
     return sql`websearch_to_tsquery('english', ${trimmed})`;
 };
 
+export const buildFuzzySearchCondition = (search: string | undefined): SQL | null => {
+    if (!search) {
+        return null;
+    }
+    const trimmed = search.trim();
+    if (!trimmed) {
+        return null;
+    }
+    return sql`(${productsTable.name} % ${trimmed} OR word_similarity(${trimmed}, ${productsTable.name}) > 0.25)`;
+};
+
+export const buildFuzzyOrderBy = (
+    search: string,
+    sortOrder: TProductSort["sortOrder"] = "desc"
+): SQL[] => {
+    const trimmed = search.trim();
+    const rankSql = sql`greatest(similarity(${productsTable.name}, ${trimmed}), word_similarity(${trimmed}, ${productsTable.name}))`;
+    const direction = sortOrder === "asc" ? asc : desc;
+    return [
+        direction(rankSql),
+        desc(productsTable.createdAt),
+    ];
+};
+
 export const resolveProductSort = (query: {
     search?: string;
     sortBy?: TProductSort["sortBy"];
@@ -91,6 +114,7 @@ export const buildProductConditions = (
     mode: "public" | "admin",
     searchQuery?: SQL | null,
     cursorCondition?: SQL | null,
+    fuzzyCondition?: SQL | null,
 ): SQL | undefined => {
     const conditions: SQL[] = [];
 
@@ -116,6 +140,8 @@ export const buildProductConditions = (
 
     if (searchQuery) {
         conditions.push(sql`${productsTable.searchVector} @@ ${searchQuery}`);
+    } else if (fuzzyCondition) {
+        conditions.push(fuzzyCondition);
     }
 
     if (cursorCondition) {
@@ -123,11 +149,16 @@ export const buildProductConditions = (
     }
 
     if (query.category) {
-        conditions.push(eq(productsTable.category, query.category));
-    }
-
-    if (query.subcategory) {
-        conditions.push(eq(productsTable.subcategory, query.subcategory));
+        conditions.push(sql`EXISTS (
+            WITH RECURSIVE cat_tree AS (
+                SELECT id FROM ${categoriesTable} WHERE ${categoriesTable.slug} = ${query.category} OR ${categoriesTable.id}::text = ${query.category}
+                UNION ALL
+                SELECT c.id FROM ${categoriesTable} c JOIN cat_tree ct ON c.parent_id = ct.id
+            )
+            SELECT 1 FROM ${productCategoriesTable} pc
+            WHERE pc.product_id = ${productsTable.id}
+              AND pc.category_id IN (SELECT id FROM cat_tree)
+        )`);
     }
 
     if (query.tags && query.tags.length > 0) {
@@ -158,32 +189,23 @@ export const getProductFacets = async (
     const facetSql = sql`
         WITH matched AS (
             SELECT 
-                ${productsTable.category} AS category,
-                ${productsTable.subcategory} AS subcategory,
+                ${productsTable.id} AS id,
                 ${productsTable.tags} AS tags,
                 ${productsTable.sellPrice} AS sell_price
             FROM ${productsTable}
             ${whereClause}
         ),
         cat_counts AS (
-            SELECT json_agg(json_build_object('name', category, 'count', c)) AS categories
+            SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'slug', c.slug, 'count', s.c)) AS categories
             FROM (
-                SELECT category, count(*)::int AS c
-                FROM matched
-                GROUP BY category
+                SELECT pc.category_id as cat_id, count(DISTINCT m.id)::int AS c
+                FROM matched m
+                JOIN ${productCategoriesTable} pc ON pc.product_id = m.id
+                GROUP BY pc.category_id
                 ORDER BY c DESC
                 LIMIT 20
             ) s
-        ),
-        subcat_counts AS (
-            SELECT json_agg(json_build_object('name', subcategory, 'count', c)) AS subcategories
-            FROM (
-                SELECT subcategory, count(*)::int AS c
-                FROM matched
-                GROUP BY subcategory
-                ORDER BY c DESC
-                LIMIT 20
-            ) s
+            JOIN ${categoriesTable} c ON c.id = s.cat_id
         ),
         tag_counts AS (
             SELECT json_agg(json_build_object('name', tag, 'count', c)) AS tags
@@ -203,7 +225,6 @@ export const getProductFacets = async (
         )
         SELECT 
             COALESCE((SELECT categories FROM cat_counts), '[]'::json) AS categories,
-            COALESCE((SELECT subcategories FROM subcat_counts), '[]'::json) AS subcategories,
             COALESCE((SELECT tags FROM tag_counts), '[]'::json) AS tags,
             (SELECT json_build_object('min', min_price, 'max', max_price) FROM price_bounds) AS "priceRange";
     `;
@@ -221,14 +242,12 @@ export const getProductFacets = async (
         }
     };
 
-    const categories = parseJsonField(row.categories, []) as Array<{ name: string; count: number }>;
-    const subcategories = parseJsonField(row.subcategories, []) as Array<{ name: string; count: number }>;
+    const categories = parseJsonField(row.categories, []) as Array<{ id: string; name: string; slug: string; count: number }>;
     const tags = parseJsonField(row.tags, []) as Array<{ name: string; count: number }>;
     const priceRange = parseJsonField(row.priceRange, { min: 0, max: 0 }) as { min: number; max: number };
 
     return ProductFacetsSchema.parse({
         categories,
-        subcategories,
         tags,
         priceRange: {
             min: Number(priceRange.min ?? 0),
