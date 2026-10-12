@@ -2,6 +2,8 @@ export type StatusCode =
     | 200
     | 201
     | 204
+    | 301
+    | 308
     | 400
     | 401
     | 403
@@ -17,6 +19,16 @@ export class AppError extends Error {
     ) {
         super(message);
         this.name = this.constructor.name;
+    }
+}
+
+export class PermanentRedirectError extends AppError {
+    constructor(
+        public canonicalSlug: string,
+        public redirectUrl: string,
+        message = "Product slug has moved permanently"
+    ) {
+        super(308, message);
     }
 }
 

@@ -1,4 +1,4 @@
-import { productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
+import { productsTable, productSlugRedirectsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import z from "zod";
 import { INVENTORY_TYPES, PRODUCT_STATUSES, WEIGHT_UNITS } from "./constants";
@@ -29,6 +29,9 @@ export type TWeightUnit = z.infer<typeof WeightUnitSchema>;
 
 export const ProductVariantModelSchema = createSelectSchema(productVariantsTable);
 export type TProductVariantModel = z.infer<typeof ProductVariantModelSchema>;
+
+export const ProductSlugRedirectModelSchema = createSelectSchema(productSlugRedirectsTable);
+export type TProductSlugRedirectModel = z.infer<typeof ProductSlugRedirectModelSchema>;
 
 export const ProductVariantPublicSchema = z.object({
     id: z.string(),

@@ -156,6 +156,18 @@ export const productVariantsTable = pgTable("product_variants", {
     index("product_variants_product_active_idx").on(table.productId, table.isActive),
 ]);
 
+export const productSlugRedirectsTable = pgTable("product_slug_redirects", {
+    id: uuid().primaryKey().$default(randomUUID),
+    productId: uuid("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
+    sourceSlug: text("source_slug").notNull().unique(),
+    targetSlug: text("target_slug").notNull(),
+    createdAt: timestamp().defaultNow().notNull(),
+}, (table) => [
+    index("product_slug_redirects_product_id_idx").on(table.productId),
+    index("product_slug_redirects_source_slug_idx").on(table.sourceSlug),
+    index("product_slug_redirects_target_slug_idx").on(table.targetSlug),
+]);
+
 export const categoriesRelations = relations(categoriesTable, ({ one, many }) => ({
     parent: one(categoriesTable, {
         fields: [categoriesTable.parentId],
@@ -171,11 +183,19 @@ export const categoriesRelations = relations(categoriesTable, ({ one, many }) =>
 export const productsRelations = relations(productsTable, ({ many }) => ({
     productCategories: many(productCategoriesTable),
     variants: many(productVariantsTable),
+    slugRedirects: many(productSlugRedirectsTable),
 }));
 
 export const productVariantsRelations = relations(productVariantsTable, ({ one }) => ({
     product: one(productsTable, {
         fields: [productVariantsTable.productId],
+        references: [productsTable.id],
+    }),
+}));
+
+export const productSlugRedirectsRelations = relations(productSlugRedirectsTable, ({ one }) => ({
+    product: one(productsTable, {
+        fields: [productSlugRedirectsTable.productId],
         references: [productsTable.id],
     }),
 }));

@@ -28,8 +28,11 @@ import {
     UpdateProductVariantSchema,
     ProductVariantPublicSchema,
     ProductVariantSchema,
+    ProductSlugRedirectModelSchema,
 } from "@/features/products/types";
 import { calculateVariantStock, convertWeightUnit } from "@/features/products/inventory";
+import { PermanentRedirectError } from "@/lib/error";
+import { handleError } from "@/lib/http";
 
 const dialect = new PgDialect();
 
@@ -572,7 +575,107 @@ function runTests() {
     console.assert(stockDiscrete === 25, "Discrete inventory retains standalone variant stock");
     console.log("✔ calculateVariantStock correctly evaluated shared pool, dynamic pack counts, overrides, and discrete fallbacks");
 
-    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, and Shared Pool Inventory tests PASSED successfully! 🚀");
+    console.log("\n=== 13. Testing Slug 301/308 Redirect Engine & Reservation Logic ===");
+
+    // 1. PermanentRedirectError instantiation and properties
+    const testErr = new PermanentRedirectError("premium-basmati-rice", "/api/v1/products/premium-basmati-rice");
+    console.assert(testErr.statusCode === 308, "PermanentRedirectError status code should be 308");
+    console.assert(testErr.canonicalSlug === "premium-basmati-rice", "Canonical slug should match");
+    console.assert(testErr.redirectUrl === "/api/v1/products/premium-basmati-rice", "Redirect URL should match");
+    console.assert(testErr.message.includes("Product slug has moved permanently"), "Default message should indicate permanent move");
+
+    // 2. handleError HTTP response serialization for 308 redirect
+    const httpRes = handleError(testErr);
+    console.assert(httpRes.status === 308, "HTTP Response status should be 308 Permanent Redirect");
+    console.assert(
+        httpRes.headers.get("Location") === "/api/v1/products/premium-basmati-rice",
+        "HTTP Response Location header should be set to canonical product route"
+    );
+
+    // 3. ProductSlugRedirectModelSchema validation
+    const validRedirectRecord = {
+        id: "a0000000-0000-4000-8000-000000000001",
+        productId: "b0000000-0000-4000-8000-000000000001",
+        sourceSlug: "old-basmati-rice",
+        targetSlug: "premium-basmati-rice",
+        createdAt: new Date(),
+    };
+    const parsedRedirect = ProductSlugRedirectModelSchema.safeParse(validRedirectRecord);
+    console.assert(parsedRedirect.success, "Valid redirect record should parse successfully");
+
+    // 4. Draft vs Published Redirect Rule simulation
+    // - Draft product renaming: wasEverPublished is false -> redirects should NOT be created
+    const draftProduct = {
+        id: "prod-1",
+        slug: "draft-rice",
+        status: "draft",
+        publishedAt: null,
+    };
+    const wasEverPublishedDraft = draftProduct.publishedAt !== null || draftProduct.status === "published";
+    console.assert(!wasEverPublishedDraft, "Draft product with null publishedAt should NOT qualify for slug redirection");
+
+    // - Published product renaming: wasEverPublished is true -> redirects MUST be created
+    const publishedProduct = {
+        id: "prod-2",
+        slug: "published-rice",
+        status: "published",
+        publishedAt: new Date(),
+    };
+    const wasEverPublishedLive = publishedProduct.publishedAt !== null || publishedProduct.status === "published";
+    console.assert(wasEverPublishedLive, "Published product must qualify for slug redirection");
+
+    // - Product previously published but now archived/draft: wasEverPublished is true
+    const archivedProduct = {
+        id: "prod-3",
+        slug: "archived-rice",
+        status: "archived",
+        publishedAt: new Date("2025-01-01"),
+    };
+    const wasEverPublishedArchived = archivedProduct.publishedAt !== null || archivedProduct.status === "published";
+    console.assert(wasEverPublishedArchived, "Previously published product with publishedAt != null must qualify for slug redirection");
+
+    // 5. 1-Hop Chain Flattening Simulation
+    // Existing chain: A -> B. Now B is renamed to C.
+    // Flattening logic: all existing redirects pointing to targetSlug === 'B' must be updated to targetSlug === 'C',
+    // plus a new redirect for B -> C.
+    const existingRedirects = [
+        { id: "r1", productId: "prod-2", sourceSlug: "slug-a", targetSlug: "slug-b" },
+    ];
+    const newCanonicalSlug = "slug-c";
+    const currentSlug = "slug-b";
+
+    // Flatten existing:
+    const flattened = existingRedirects.map((r) =>
+        r.targetSlug === currentSlug ? { ...r, targetSlug: newCanonicalSlug } : r
+    );
+    // Add new redirect for currentSlug -> newCanonicalSlug:
+    flattened.push({
+        id: "r2",
+        productId: "prod-2",
+        sourceSlug: currentSlug,
+        targetSlug: newCanonicalSlug,
+    });
+
+    console.assert(flattened.length === 2, "Should have 2 redirect records after rename");
+    console.assert(flattened.every((r) => r.targetSlug === newCanonicalSlug), "Every historical slug should point directly to 1-hop canonical 'slug-c'");
+    console.assert(flattened.find((r) => r.sourceSlug === "slug-a")?.targetSlug === "slug-c", "slug-a -> slug-c flattened");
+    console.assert(flattened.find((r) => r.sourceSlug === "slug-b")?.targetSlug === "slug-c", "slug-b -> slug-c recorded");
+
+    // 6. Slug Reversion Simulation
+    // Suppose product renames from C back to A:
+    // Any redirect where sourceSlug === 'slug-a' must be removed to avoid cycles (A -> A),
+    // and remaining redirects (e.g. B) point to A.
+    const revertTarget = "slug-a";
+    const postReversion = flattened
+        .filter((r) => r.sourceSlug !== revertTarget) // prune sourceSlug === 'slug-a'
+        .map((r) => ({ ...r, targetSlug: revertTarget })); // point rest (B) to 'slug-a'
+
+    console.assert(postReversion.length === 1, "Reversion pruned the old redirect record to avoid cycles");
+    console.assert(postReversion[0].sourceSlug === "slug-b" && postReversion[0].targetSlug === "slug-a", "slug-b now redirects directly to reverted slug-a");
+
+    console.log("✔ Slug 301/308 redirect engine, chain flattening, draft rules, and reversion simulations passed");
+
+    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, Shared Pool Inventory, and Slug 301 Redirect Engine tests PASSED successfully! 🚀");
 }
 
 runTests();

@@ -26,10 +26,10 @@ import {
     type TSuggestQuery,
     type TProductSuggestions,
 } from "./types";
-import { BadRequestError, ConflictError, NotFoundError } from "@/lib/error";
+import { BadRequestError, ConflictError, NotFoundError, PermanentRedirectError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
-import { categoriesTable, productCategoriesTable, productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
-import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { categoriesTable, productCategoriesTable, productsTable, productSlugRedirectsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
+import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL, ne } from "drizzle-orm";
 import {
     buildCursorCondition,
     buildFuzzyOrderBy,
@@ -275,16 +275,30 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
             },
         },
     });
+
     if (!product) {
+        const redirect = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+        });
+
+        if (redirect) {
+            throw new PermanentRedirectError(
+                redirect.targetSlug,
+                `/api/v1/products/${redirect.targetSlug}`
+            );
+        }
+
         throw new NotFoundError("Product not found");
     }
+
     return GetProductPublicSchema.parse(mapProductCategories(product));
 };
 
 const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> => {
-    const product = await db.query.productsTable.findFirst({
+    let targetSlug = slug;
+    let product = await db.query.productsTable.findFirst({
         where: (product, { eq }) => {
-            return eq(product.slug, slug);
+            return eq(product.slug, targetSlug);
         },
         columns: {
             searchVector: false,
@@ -300,9 +314,37 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
             },
         },
     });
+
+    if (!product) {
+        const redirect = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+        });
+
+        if (redirect) {
+            targetSlug = redirect.targetSlug;
+            product = await db.query.productsTable.findFirst({
+                where: (p, { eq }) => eq(p.slug, targetSlug),
+                columns: {
+                    searchVector: false,
+                },
+                with: {
+                    productCategories: {
+                        with: {
+                            category: true,
+                        },
+                    },
+                    variants: {
+                        orderBy: (variant, { asc }) => [asc(variant.weightValue)],
+                    },
+                },
+            });
+        }
+    }
+
     if (!product) {
         throw new NotFoundError("Product not found");
     }
+
     return GetProductSchema.parse(mapProductCategories(product));
 };
 
@@ -445,11 +487,20 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
             },
         });
 
-        if (!slugTaken) {
+        const redirectTaken = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+            columns: { id: true },
+        });
+
+        if (!slugTaken && !redirectTaken) {
             break;
         }
         if (explicitSlug) {
-            throw new ConflictError("A product with this slug already exists");
+            throw new ConflictError(
+                slugTaken
+                    ? "A product with this slug already exists"
+                    : "This slug is reserved by a redirect for an existing product"
+            );
         }
         slug = `${baseSlug}-${attempt + 1}`;
         if (attempt === 10) {
@@ -497,11 +548,25 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
 };
 
 const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutput["data"]): Promise<TProductModel> => {
-    const existingProduct = await db.query.productsTable.findFirst({
+    let existingProduct = await db.query.productsTable.findFirst({
         where: (product, { eq, and, isNull }) => {
             return and(eq(product.slug, slug), isNull(product.deletedAt));
         },
     });
+
+    if (!existingProduct) {
+        const redirect = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+        });
+        if (redirect) {
+            existingProduct = await db.query.productsTable.findFirst({
+                where: (product, { eq, and, isNull }) => {
+                    return and(eq(product.slug, redirect.targetSlug), isNull(product.deletedAt));
+                },
+            });
+        }
+    }
+
     if (existingProduct) {
         let updateData = { ...data };
 
@@ -514,7 +579,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             updateData = { ...updateData, publishedAt: new Date() };
         }
 
-        if (data.slug && data.slug !== slug) {
+        if (data.slug && data.slug !== existingProduct.slug) {
             const newSlug = slugify(data.slug);
             if (!newSlug) {
                 throw new BadRequestError("Slug must contain at least one Latin letter or number");
@@ -527,6 +592,39 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             });
             if (slugTaken) {
                 throw new ConflictError("A product with this slug already exists");
+            }
+
+            const redirectTaken = await db.query.productSlugRedirectsTable.findFirst({
+                where: (r, { eq, and, ne }) => and(eq(r.sourceSlug, newSlug), ne(r.productId, existingProduct.id)),
+            });
+            if (redirectTaken) {
+                throw new ConflictError("This slug is reserved by a redirect for another product");
+            }
+
+            const wasEverPublished = existingProduct.publishedAt != null || existingProduct.status === "published";
+            if (wasEverPublished) {
+                // If reverting to a previously redirected slug for this same product, delete the redirect record
+                await db.delete(productSlugRedirectsTable).where(
+                    and(
+                        eq(productSlugRedirectsTable.productId, existingProduct.id),
+                        eq(productSlugRedirectsTable.sourceSlug, newSlug)
+                    )
+                );
+
+                // Insert the new redirect for the old slug
+                await db.insert(productSlugRedirectsTable).values({
+                    productId: existingProduct.id,
+                    sourceSlug: existingProduct.slug,
+                    targetSlug: newSlug,
+                }).onConflictDoUpdate({
+                    target: productSlugRedirectsTable.sourceSlug,
+                    set: { targetSlug: newSlug },
+                });
+
+                // Flatten all historical redirects for this product to point directly to newSlug (1-hop 301)
+                await db.update(productSlugRedirectsTable)
+                    .set({ targetSlug: newSlug })
+                    .where(eq(productSlugRedirectsTable.productId, existingProduct.id));
             }
 
             updateData = { ...updateData, slug: newSlug };
@@ -577,7 +675,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
 
         const [product] = await db.update(productsTable)
             .set(productUpdateData)
-            .where(and(eq(productsTable.slug, slug), isNull(productsTable.deletedAt)))
+            .where(eq(productsTable.id, existingProduct.id))
             .returning();
 
         return product;
@@ -586,9 +684,23 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
 };
 
 const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
+    let targetSlug = slug;
+    const directExists = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, slug), isNull(p.deletedAt)),
+        columns: { slug: true },
+    });
+    if (!directExists) {
+        const redirect = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+        });
+        if (redirect) {
+            targetSlug = redirect.targetSlug;
+        }
+    }
+
     const [product] = await db.update(productsTable)
         .set({ deletedAt: new Date() })
-        .where(and(eq(productsTable.slug, slug), isNull(productsTable.deletedAt)))
+        .where(and(eq(productsTable.slug, targetSlug), isNull(productsTable.deletedAt)))
         .returning();
 
     if (!product) {
@@ -598,9 +710,23 @@ const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> =
 };
 
 const restoreProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
+    let targetSlug = slug;
+    const directExists = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNotNull }) => and(eq(p.slug, slug), isNotNull(p.deletedAt)),
+        columns: { slug: true },
+    });
+    if (!directExists) {
+        const redirect = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+        });
+        if (redirect) {
+            targetSlug = redirect.targetSlug;
+        }
+    }
+
     const [product] = await db.update(productsTable)
         .set({ deletedAt: null })
-        .where(and(eq(productsTable.slug, slug), isNotNull(productsTable.deletedAt)))
+        .where(and(eq(productsTable.slug, targetSlug), isNotNull(productsTable.deletedAt)))
         .returning();
 
     if (!product) {

@@ -1,4 +1,4 @@
-import { AppError } from "@/lib/error";
+import { AppError, PermanentRedirectError } from "@/lib/error";
 import { isNeonDbError, mapPostgresError } from "@/lib/error/postgres";
 import { logger } from "@/lib/pino/logger";
 import { ZodError, treeifyError } from "zod";
@@ -19,6 +19,23 @@ export const errorResponse = (message: string, status: number = 500, details?: u
     );
 
 export const handleError = (err: unknown): Response => {
+    if (err instanceof PermanentRedirectError) {
+        return Response.json(
+            {
+                statusCode: 308,
+                message: err.message,
+                redirectUrl: err.redirectUrl,
+                canonicalSlug: err.canonicalSlug,
+            },
+            {
+                status: 308,
+                headers: {
+                    Location: err.redirectUrl,
+                },
+            }
+        );
+    }
+
     if (err instanceof AppError) {
         return errorResponse(err.message, err.statusCode);
     }
