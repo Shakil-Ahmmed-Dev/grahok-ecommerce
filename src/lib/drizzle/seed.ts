@@ -1,7 +1,15 @@
 import { CreateProductSchema, type TCreateProductInput } from "@/features/products/types";
 import { slugify } from "@/lib/slug";
 import { db } from "./index";
-import { categoriesTable, productCategoriesTable, productsTable, productVariantsTable } from "./schemas/public";
+import {
+    categoriesTable,
+    productCategoriesTable,
+    productOptionsTable,
+    productOptionValuesTable,
+    productsTable,
+    productVariantsTable,
+} from "./schemas/public";
+import { normalizeVariantSignature } from "@/features/products/matrix";
 
 interface SeedProductItem extends Omit<TCreateProductInput, "categoryIds" | "primaryCategoryId"> {
     categorySlug: string;
@@ -84,11 +92,20 @@ const dummyProducts: SeedProductItem[] = [
         purchasePrice: "6.50",
         sellPrice: "14.99",
         stock: "300",
+        options: [
+            {
+                name: "Capacity",
+                values: [
+                    { value: "500ml", position: 0 },
+                    { value: "750ml", position: 1 },
+                    { value: "1000ml", position: 2 },
+                ],
+            },
+        ],
         variants: [
             {
                 title: "500ml",
-                weightValue: 500,
-                weightUnit: "ml",
+                optionValues: { Capacity: "500ml" },
                 purchasePrice: 5.0,
                 sellPrice: 12.99,
                 stock: 100,
@@ -97,8 +114,7 @@ const dummyProducts: SeedProductItem[] = [
             },
             {
                 title: "750ml",
-                weightValue: 750,
-                weightUnit: "ml",
+                optionValues: { Capacity: "750ml" },
                 purchasePrice: 6.5,
                 sellPrice: 14.99,
                 stock: 120,
@@ -107,8 +123,7 @@ const dummyProducts: SeedProductItem[] = [
             },
             {
                 title: "1000ml",
-                weightValue: 1000,
-                weightUnit: "ml",
+                optionValues: { Capacity: "1000ml" },
                 purchasePrice: 8.0,
                 sellPrice: 18.99,
                 stock: 80,
@@ -127,10 +142,65 @@ const dummyProducts: SeedProductItem[] = [
         description: "Pre-shrunk, breathable everyday essential dyed with non-toxic botanical colors.",
         featuredImageUrl: "https://example.com/images/tshirt-feature.jpg",
         images: ["https://example.com/images/tshirt-1.jpg"],
-        status: "draft",
+        status: "published",
+        publishedAt: new Date(),
         purchasePrice: "8.00",
         sellPrice: "19.99",
-        stock: "200"
+        stock: "200",
+        options: [
+            {
+                name: "Color",
+                values: [
+                    { value: "Black", swatchMeta: "#000000", position: 0 },
+                    { value: "White", swatchMeta: "#FFFFFF", position: 1 },
+                ],
+            },
+            {
+                name: "Size",
+                values: [
+                    { value: "M", position: 0 },
+                    { value: "L", position: 1 },
+                ],
+            },
+        ],
+        variants: [
+            {
+                title: "Black / M",
+                optionValues: { Color: "Black", Size: "M" },
+                purchasePrice: 8.0,
+                sellPrice: 19.99,
+                stock: 50,
+                isDefault: true,
+                isActive: true,
+            },
+            {
+                title: "Black / L",
+                optionValues: { Color: "Black", Size: "L" },
+                purchasePrice: 8.0,
+                sellPrice: 19.99,
+                stock: 50,
+                isDefault: false,
+                isActive: true,
+            },
+            {
+                title: "White / M",
+                optionValues: { Color: "White", Size: "M" },
+                purchasePrice: 8.0,
+                sellPrice: 19.99,
+                stock: 50,
+                isDefault: false,
+                isActive: true,
+            },
+            {
+                title: "White / L",
+                optionValues: { Color: "White", Size: "L" },
+                purchasePrice: 8.0,
+                sellPrice: 19.99,
+                stock: 50,
+                isDefault: false,
+                isActive: true,
+            },
+        ],
     },
     {
         name: "4K Ultra HD Smart TV 55 inch",
@@ -247,11 +317,22 @@ const dummyProducts: SeedProductItem[] = [
         stock: "50",
         inventoryType: "shared_pool",
         baseWeightUnit: "kg",
+        options: [
+            {
+                name: "Package Size",
+                values: [
+                    { value: "500g", position: 0 },
+                    { value: "1kg", position: 1 },
+                    { value: "5kg", position: 2 },
+                ],
+            },
+        ],
         variants: [
             {
                 title: "500g",
-                weightValue: 500,
-                weightUnit: "g",
+                optionValues: { "Package Size": "500g" },
+                poolConsumptionRate: 0.5,
+                inventoryType: "shared_pool",
                 purchasePrice: 2.0,
                 sellPrice: 2.99,
                 stock: 0,
@@ -260,8 +341,9 @@ const dummyProducts: SeedProductItem[] = [
             },
             {
                 title: "1kg",
-                weightValue: 1,
-                weightUnit: "kg",
+                optionValues: { "Package Size": "1kg" },
+                poolConsumptionRate: 1,
+                inventoryType: "shared_pool",
                 purchasePrice: 4.0,
                 sellPrice: 5.5,
                 stock: 0,
@@ -270,8 +352,9 @@ const dummyProducts: SeedProductItem[] = [
             },
             {
                 title: "5kg",
-                weightValue: 5,
-                weightUnit: "kg",
+                optionValues: { "Package Size": "5kg" },
+                poolConsumptionRate: 5,
+                inventoryType: "shared_pool",
                 purchasePrice: 18.0,
                 sellPrice: 24.99,
                 stock: 0,
@@ -326,7 +409,7 @@ async function seed() {
             const { categorySlug, parentCategorySlug, ...productPayload } = item;
             const parsed = CreateProductSchema.parse(productPayload);
             const slug = slugify(parsed.slug ?? parsed.name);
-            const { categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, variants, ...productInsertData } = parsed;
+            const { categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, options, variants, ...productInsertData } = parsed;
             void _categoryIds;
             void _primaryCategoryId;
 
@@ -350,19 +433,48 @@ async function seed() {
                 await db.insert(productCategoriesTable).values(categoryLinks);
             }
 
+            if (options && options.length > 0) {
+                for (let optIdx = 0; optIdx < options.length; optIdx++) {
+                    const opt = options[optIdx];
+                    const [insertedOpt] = await db.insert(productOptionsTable).values({
+                        productId: insertedProduct.id,
+                        name: opt.name,
+                        position: opt.position ?? optIdx,
+                    }).returning();
+
+                    if (opt.values && opt.values.length > 0) {
+                        for (let valIdx = 0; valIdx < opt.values.length; valIdx++) {
+                            const val = opt.values[valIdx];
+                            await db.insert(productOptionValuesTable).values({
+                                optionId: insertedOpt.id,
+                                value: val.value,
+                                position: val.position ?? valIdx,
+                                swatchMeta: val.swatchMeta ?? null,
+                            });
+                        }
+                    }
+                }
+            }
+
             if (variants && variants.length > 0) {
                 for (let i = 0; i < variants.length; i++) {
                     const v = variants[i];
-                    const sku = v.sku?.trim() || `${insertedProduct.slug}-${v.weightValue}${v.weightUnit}`.toLowerCase();
-                    const title = v.title?.trim() || `${v.weightValue}${v.weightUnit}`;
+                    const signature = v.signature?.trim() || normalizeVariantSignature(v.optionValues);
+                    const title = v.title?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0 ? Object.values(v.optionValues).join(" / ") : "Default");
+                    const sku = (v.sku?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0
+                        ? `${insertedProduct.slug}-${Object.values(v.optionValues).map((val) => slugify(val).replace(/^-+|-+$/g, "")).join("-")}`
+                        : `${insertedProduct.slug}-default`
+                    )).toLowerCase();
                     const isDefault = v.isDefault ?? (i === 0);
+                    const variantInvType = v.inventoryType ?? insertedProduct.inventoryType ?? "discrete";
 
                     await db.insert(productVariantsTable).values({
                         productId: insertedProduct.id,
                         title,
-                        weightValue: v.weightValue,
-                        weightUnit: v.weightUnit,
                         sku,
+                        optionValues: v.optionValues ?? {},
+                        signature,
+                        inventoryType: variantInvType,
                         purchasePrice: v.purchasePrice,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,

@@ -29,14 +29,25 @@ import {
     ProductVariantPublicSchema,
     ProductVariantSchema,
     ProductSlugRedirectModelSchema,
+    CreateProductOptionSchema,
+    UpdateProductOptionSchema,
+    CreateOptionValueSchema,
+    UpdateOptionValueSchema,
+    GenerateMatrixInputSchema,
+    ProductOptionItemSchema,
 } from "@/features/products/types";
+import {
+    normalizeVariantSignature,
+    generateCartesianPermutations,
+    resolveUniqueSku,
+} from "@/features/products/matrix";
 import { calculateVariantStock, convertWeightUnit } from "@/features/products/inventory";
 import { PermanentRedirectError } from "@/lib/error";
 import { handleError } from "@/lib/http";
 
 const dialect = new PgDialect();
 
-function runTests() {
+async function runTests() {
     console.log("=== 1. Testing Search Query Builder ===");
 
     // Empty searches
@@ -305,7 +316,7 @@ function runTests() {
     console.assert(limitOverflowThrew, "Related products limit > 20 should throw validation error");
     console.log("✔ RelatedProductsQuerySchema validates limits and constraints");
 
-    console.log("\n=== 11. Testing Weight-Based Variant Schemas ===");
+    console.log("\n=== 11. Testing Option Matrix & Arbitrary Variant Schemas ===");
     // Weight units validation
     const validUnits = ["g", "kg", "mg", "ml", "l", "oz", "lb", "pcs"];
     for (const unit of validUnits) {
@@ -321,39 +332,105 @@ function runTests() {
     console.assert(invalidUnitThrew, "WeightUnitSchema should reject invalid units");
     console.log("✔ WeightUnitSchema accepted all standard weight/volume units and rejected invalid ones");
 
+    // Option and OptionValue schemas
+    const parsedOption = CreateProductOptionSchema.parse({
+        name: "Size",
+        position: 0,
+        values: [
+            { value: "S", position: 0 },
+            { value: "M", position: 1 },
+        ],
+    });
+    console.assert(parsedOption.name === "Size" && parsedOption.values?.length === 2, "CreateProductOptionSchema parsed");
+
+    const parsedUpdateOption = UpdateProductOptionSchema.parse({ name: "Dimensions" });
+    console.assert(parsedUpdateOption.name === "Dimensions", "UpdateProductOptionSchema parsed");
+
+    const parsedValCreate = CreateOptionValueSchema.parse({ value: "Red", swatchMeta: "#FF0000" });
+    console.assert(parsedValCreate.value === "Red" && parsedValCreate.swatchMeta === "#FF0000", "CreateOptionValueSchema parsed");
+
+    const parsedValUpdate = UpdateOptionValueSchema.parse({ value: "Crimson" });
+    console.assert(parsedValUpdate.value === "Crimson", "UpdateOptionValueSchema parsed");
+
+    const parsedOptionItem = ProductOptionItemSchema.parse({
+        id: "opt-1",
+        productId: "p-1",
+        name: "Size",
+        position: 0,
+        values: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+    });
+    console.assert(parsedOptionItem.id === "opt-1", "ProductOptionItemSchema parsed");
+
+    const resolvedSku = await resolveUniqueSku("tshirt-red-s", (sku) => new Set(["tshirt-red-s"]).has(sku));
+    console.assert(resolvedSku === "tshirt-red-s-1", "resolveUniqueSku resolved duplicate SKU collision");
+
+    const parsedGenerateMatrixInput = GenerateMatrixInputSchema.parse({
+        options: [
+            {
+                name: "Size",
+                values: [{ value: "S" }, { value: "M" }],
+            },
+        ],
+        defaultSellPrice: "29.99",
+        defaultStock: "50",
+        preview: true,
+    });
+    console.assert(parsedGenerateMatrixInput.defaultSellPrice === 29.99, "GenerateMatrixInputSchema defaultSellPrice coerced");
+    console.assert(parsedGenerateMatrixInput.defaultStock === 50, "GenerateMatrixInputSchema defaultStock coerced");
+    console.assert(parsedGenerateMatrixInput.preview === true, "GenerateMatrixInputSchema preview parsed");
+
+    // Matrix Engine Permutations & Signatures
+    const sig1 = normalizeVariantSignature({ Size: "M", Color: "Red" });
+    const sig2 = normalizeVariantSignature({ Color: "  red  ", size: "m" });
+    console.assert(sig1 === "color=red&size=m", "normalizeVariantSignature sorts and formats keys");
+    console.assert(sig2 === sig1, "normalizeVariantSignature handles casing and whitespace deterministically");
+    console.assert(normalizeVariantSignature({}) === "default", "Empty options normalize to 'default'");
+
+    const testOptionsForMatrix = [
+        {
+            name: "Color",
+            values: [
+                { id: "c1", value: "Red" },
+                { id: "c2", value: "Blue" },
+            ],
+        },
+        {
+            name: "Size",
+            values: [
+                { id: "s1", value: "S" },
+                { id: "s2", value: "M" },
+            ],
+        },
+    ];
+    const permutations = generateCartesianPermutations("organic-t-shirt", testOptionsForMatrix, "TSHIRT");
+    console.assert(permutations.length === 4, "2x2 options produce 4 permutations");
+    console.assert(permutations[0].title === "Red / S", "First permutation title is Red / S");
+    console.assert(permutations[0].signature === "color=red&size=s", "Permutation signature generated");
+    console.assert(permutations[0].suggestedSku === "tshirt-red-s", "Permutation suggestedSku formatted with prefix");
+    console.log("✔ Cartesian permutation and signature normalization engine passed");
+
     // CreateProductVariantSchema parsing and coercion
     const parsedVariantInput = CreateProductVariantSchema.parse({
-        weightValue: "750",
-        weightUnit: "ml",
+        title: "Large / Black",
+        optionValues: { Size: "Large", Color: "Black" },
         purchasePrice: "6.50",
         sellPrice: "14.99",
         stock: "120",
     });
-    console.assert(parsedVariantInput.weightValue === 750, "weightValue coerced to number");
+    console.assert(parsedVariantInput.title === "Large / Black", "title parsed");
+    console.assert(parsedVariantInput.optionValues.Size === "Large", "optionValues parsed");
     console.assert(parsedVariantInput.purchasePrice === 6.5, "purchasePrice coerced to number");
     console.assert(parsedVariantInput.sellPrice === 14.99, "sellPrice coerced to number");
     console.assert(parsedVariantInput.stock === 120, "stock coerced to number");
     console.assert(parsedVariantInput.isDefault === false, "isDefault defaults to false");
     console.assert(parsedVariantInput.isActive === true, "isActive defaults to true");
 
-    let negativeWeightThrew = false;
-    try {
-        CreateProductVariantSchema.parse({
-            weightValue: -10,
-            weightUnit: "kg",
-            purchasePrice: 10,
-            sellPrice: 20,
-        });
-    } catch {
-        negativeWeightThrew = true;
-    }
-    console.assert(negativeWeightThrew, "CreateProductVariantSchema should reject negative weight");
-
     let negativePriceThrew = false;
     try {
         CreateProductVariantSchema.parse({
-            weightValue: 1,
-            weightUnit: "kg",
+            title: "Invalid",
             purchasePrice: -5,
             sellPrice: 20,
         });
@@ -367,12 +444,14 @@ function runTests() {
     const updateVariantInput = UpdateProductVariantSchema.parse({
         sellPrice: "19.99",
         isDefault: true,
+        optionValues: { Size: "XL" },
     });
     console.assert(updateVariantInput.sellPrice === 19.99, "Update schema accepts partial payload and coerces sellPrice");
     console.assert(updateVariantInput.isDefault === true, "Update schema accepts partial isDefault flag");
+    console.assert(updateVariantInput.optionValues?.Size === "XL", "Update schema accepts optionValues");
     console.log("✔ UpdateProductVariantSchema validated partial updates");
 
-    // Product with variants projection
+    // Product with variants & options projection
     const mockProduct = {
         id: "a123e456-e89b-12d3-a456-426614174000",
         name: "Insulated Water Bottle",
@@ -390,16 +469,32 @@ function runTests() {
         baseWeightUnit: null,
         searchVector: "raw-tsvector",
         categories: [],
+        options: [
+            {
+                id: "opt-1",
+                productId: "a123e456-e89b-12d3-a456-426614174000",
+                name: "Capacity",
+                position: 0,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                values: [
+                    { id: "val-1", optionId: "opt-1", value: "500ml", position: 0, swatchMeta: null, createdAt: new Date(), updatedAt: new Date() },
+                    { id: "val-2", optionId: "opt-1", value: "1000ml", position: 1, swatchMeta: null, createdAt: new Date(), updatedAt: new Date() },
+                ],
+            },
+        ],
         variants: [
             {
                 id: "b123e456-e89b-12d3-a456-426614174001",
                 productId: "a123e456-e89b-12d3-a456-426614174000",
                 title: "500ml",
-                weightValue: 500,
-                weightUnit: "ml" as const,
+                optionValues: { Capacity: "500ml" },
+                signature: "capacity=500ml",
                 sku: "bottle-500ml",
                 sellPrice: 12.99,
                 stock: 50,
+                inventoryType: "discrete" as const,
+                poolConsumptionRate: null,
                 isDefault: true,
                 isActive: true,
                 imageUrl: null,
@@ -408,11 +503,13 @@ function runTests() {
                 id: "b123e456-e89b-12d3-a456-426614174002",
                 productId: "a123e456-e89b-12d3-a456-426614174000",
                 title: "1000ml",
-                weightValue: 1000,
-                weightUnit: "ml" as const,
+                optionValues: { Capacity: "1000ml" },
+                signature: "capacity=1000ml",
                 sku: "bottle-1000ml",
                 sellPrice: 16.99,
                 stock: 50,
+                inventoryType: "discrete" as const,
+                poolConsumptionRate: null,
                 isDefault: false,
                 isActive: true,
                 imageUrl: null,
@@ -421,8 +518,10 @@ function runTests() {
     };
 
     const publicProduct = GetProductPublicSchema.parse(mockProduct);
+    console.assert(publicProduct.options.length === 1, "Public product includes 1 option");
     console.assert(publicProduct.variants.length === 2, "Public product includes 2 variants");
     console.assert(publicProduct.variants[0].title === "500ml", "First variant is 500ml");
+    console.assert(publicProduct.variants[0].signature === "capacity=500ml", "First variant signature preserved");
     console.assert(!("purchasePrice" in publicProduct.variants[0]), "Public variant does not expose purchasePrice");
 
     const adminProduct = GetProductSchema.parse({
@@ -438,6 +537,7 @@ function runTests() {
             updatedAt: new Date(),
         })),
     });
+    console.assert(adminProduct.options.length === 1, "Admin product includes 1 option");
     console.assert(adminProduct.variants.length === 2, "Admin product includes 2 variants");
     console.assert(adminProduct.variants[0].purchasePrice === 4.5, "Admin variant exposes purchasePrice");
 
@@ -678,5 +778,5 @@ function runTests() {
     console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, Shared Pool Inventory, and Slug 301 Redirect Engine tests PASSED successfully! 🚀");
 }
 
-runTests();
+void runTests();
 

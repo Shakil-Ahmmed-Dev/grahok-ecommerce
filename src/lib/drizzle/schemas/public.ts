@@ -7,6 +7,7 @@ import {
     boolean,
     customType,
     index,
+    integer,
     jsonb,
     numeric,
     pgEnum,
@@ -121,15 +122,43 @@ export const productCategoriesTable = pgTable("product_categories", {
     index("product_categories_category_id_idx").on(table.categoryId),
 ]);
 
+export const productOptionsTable = pgTable("product_options", {
+    id: uuid().primaryKey().$default(randomUUID),
+    productId: uuid("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    position: integer().notNull().default(0),
+    createdAt: timestamp().defaultNow().notNull(),
+    updatedAt: timestamp().defaultNow()
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+}, (table) => [
+    unique("product_options_product_name_unique").on(table.productId, table.name),
+    index("product_options_product_id_idx").on(table.productId),
+]);
+
+export const productOptionValuesTable = pgTable("product_option_values", {
+    id: uuid().primaryKey().$default(randomUUID),
+    optionId: uuid("option_id").notNull().references(() => productOptionsTable.id, { onDelete: "cascade" }),
+    value: text().notNull(),
+    position: integer().notNull().default(0),
+    swatchMeta: text("swatch_meta"),
+    createdAt: timestamp().defaultNow().notNull(),
+    updatedAt: timestamp().defaultNow()
+        .$onUpdate(() => /* @__PURE__ */ new Date())
+        .notNull(),
+}, (table) => [
+    unique("product_option_values_option_value_unique").on(table.optionId, table.value),
+    index("product_option_values_option_id_idx").on(table.optionId),
+]);
+
 export const productVariantsTable = pgTable("product_variants", {
     id: uuid().primaryKey().$default(randomUUID),
     productId: uuid("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
     title: text().notNull(),
-    weightValue: numeric<"number">({
-        scale: 2,
-    }).notNull(),
-    weightUnit: weightUnitEnum("weight_unit").notNull(),
     sku: text().notNull().unique(),
+    optionValues: jsonb("option_values").$type<Record<string, string>>().notNull().default({}),
+    signature: text().notNull(),
+    inventoryType: inventoryTypeEnum("inventory_type").notNull().default("discrete"),
     purchasePrice: numeric<"number">({
         scale: 2,
     }).notNull(),
@@ -150,10 +179,11 @@ export const productVariantsTable = pgTable("product_variants", {
         .$onUpdate(() => /* @__PURE__ */ new Date())
         .notNull(),
 }, (table) => [
-    unique("product_variants_product_weight_unique").on(table.productId, table.weightValue, table.weightUnit),
+    unique("product_variants_product_signature_unique").on(table.productId, table.signature),
     index("product_variants_product_id_idx").on(table.productId),
     index("product_variants_sku_idx").on(table.sku),
     index("product_variants_product_active_idx").on(table.productId, table.isActive),
+    index("product_variants_option_values_idx").using("gin", table.optionValues),
 ]);
 
 export const productSlugRedirectsTable = pgTable("product_slug_redirects", {
@@ -180,9 +210,25 @@ export const categoriesRelations = relations(categoriesTable, ({ one, many }) =>
     productCategories: many(productCategoriesTable),
 }));
 
+export const productOptionsRelations = relations(productOptionsTable, ({ one, many }) => ({
+    product: one(productsTable, {
+        fields: [productOptionsTable.productId],
+        references: [productsTable.id],
+    }),
+    values: many(productOptionValuesTable),
+}));
+
+export const productOptionValuesRelations = relations(productOptionValuesTable, ({ one }) => ({
+    option: one(productOptionsTable, {
+        fields: [productOptionValuesTable.optionId],
+        references: [productOptionsTable.id],
+    }),
+}));
+
 export const productsRelations = relations(productsTable, ({ many }) => ({
     productCategories: many(productCategoriesTable),
     variants: many(productVariantsTable),
+    options: many(productOptionsTable),
     slugRedirects: many(productSlugRedirectsTable),
 }));
 

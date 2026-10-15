@@ -56,8 +56,8 @@ export interface CalculateVariantStockParams {
     masterStock: number;
     inventoryType: TInventoryType;
     variantStock: number;
-    weightValue: number;
-    weightUnit: TWeightUnit;
+    weightValue?: number | null;
+    weightUnit?: TWeightUnit | null;
     baseWeightUnit?: TWeightUnit | null;
     poolConsumptionRate?: number | null;
 }
@@ -66,7 +66,7 @@ export interface CalculateVariantStockParams {
  * Calculates effective available stock for a product variant.
  * - For 'discrete' inventory, returns the variant's own standalone stock count.
  * - For 'shared_pool' inventory, dynamically calculates how many packaged units can be served
- *   from the master product stock pool based on unit conversion or explicit poolConsumptionRate.
+ *   from the master product stock pool based on explicit poolConsumptionRate or unit conversion.
  */
 export function calculateVariantStock({
     masterStock,
@@ -90,8 +90,8 @@ export function calculateVariantStock({
         return Math.floor(masterStock / poolConsumptionRate);
     }
 
-    // 2. Unit conversion to master pool unit
-    if (baseWeightUnit) {
+    // 2. Unit conversion to master pool unit (if weight parameters are present)
+    if (baseWeightUnit && weightValue && weightUnit) {
         const rate = convertWeightUnit(weightValue, weightUnit, baseWeightUnit);
         if (rate != null && rate > 0) {
             return Math.floor(masterStock / rate);
@@ -99,9 +99,9 @@ export function calculateVariantStock({
     }
 
     // 3. Fallback: weightValue if units match or conversion is direct
-    if (weightValue > 0) {
+    if (weightValue && weightValue > 0) {
         return Math.floor(masterStock / weightValue);
     }
 
-    return 0;
+    return Math.floor(masterStock);
 }

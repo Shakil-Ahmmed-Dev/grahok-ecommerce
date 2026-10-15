@@ -1,4 +1,10 @@
-import { productsTable, productSlugRedirectsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
+import {
+    productOptionsTable,
+    productOptionValuesTable,
+    productsTable,
+    productSlugRedirectsTable,
+    productVariantsTable,
+} from "@/lib/drizzle/schemas/public";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import z from "zod";
 import { INVENTORY_TYPES, PRODUCT_STATUSES, WEIGHT_UNITS } from "./constants";
@@ -27,6 +33,73 @@ export type TInventoryType = z.infer<typeof InventoryTypeSchema>;
 export const WeightUnitSchema = z.enum(WEIGHT_UNITS);
 export type TWeightUnit = z.infer<typeof WeightUnitSchema>;
 
+export const ProductOptionModelSchema = createSelectSchema(productOptionsTable);
+export type TProductOptionModel = z.infer<typeof ProductOptionModelSchema>;
+
+export const ProductOptionValueModelSchema = createSelectSchema(productOptionValuesTable);
+export type TProductOptionValueModel = z.infer<typeof ProductOptionValueModelSchema>;
+
+export const OptionValueItemSchema = z.object({
+    id: z.string(),
+    optionId: z.string().optional(),
+    value: z.string(),
+    position: z.number().default(0),
+    swatchMeta: z.string().nullable().optional(),
+});
+export type TOptionValueItem = z.infer<typeof OptionValueItemSchema>;
+
+export const ProductOptionItemSchema = z.object({
+    id: z.string(),
+    productId: z.string().optional(),
+    name: z.string(),
+    position: z.number().default(0),
+    values: z.array(OptionValueItemSchema).default([]),
+});
+export type TProductOptionItem = z.infer<typeof ProductOptionItemSchema>;
+
+export const CreateOptionValueSchema = z.object({
+    value: z.string().trim().min(1, "Value is required"),
+    position: z.number().int().nonnegative().default(0),
+    swatchMeta: z.string().trim().nullable().optional(),
+});
+export type TCreateOptionValueInput = z.infer<typeof CreateOptionValueSchema>;
+
+export const UpdateOptionValueSchema = CreateOptionValueSchema.partial();
+export type TUpdateOptionValueInput = z.infer<typeof UpdateOptionValueSchema>;
+
+export const CreateProductOptionSchema = z.object({
+    name: z.string().trim().min(1, "Option name is required"),
+    position: z.number().int().nonnegative().default(0),
+    values: z.array(CreateOptionValueSchema).default([]),
+});
+export type TCreateProductOptionInput = z.infer<typeof CreateProductOptionSchema>;
+
+export const UpdateProductOptionSchema = z.object({
+    name: z.string().trim().min(1).optional(),
+    position: z.number().int().nonnegative().optional(),
+});
+export type TUpdateProductOptionInput = z.infer<typeof UpdateProductOptionSchema>;
+
+export const GenerateMatrixInputSchema = z.object({
+    options: z.array(z.object({
+        name: z.string().trim().min(1, "Option name is required"),
+        values: z.array(z.object({
+            value: z.string().trim().min(1, "Option value is required"),
+            swatchMeta: z.string().trim().nullable().optional(),
+        })).min(1, "Each option must have at least one value"),
+    })).min(1, "At least one option is required"),
+    skuPrefix: z.string().trim().optional(),
+    preview: z.boolean().default(false),
+    defaultSellPrice: z.coerce.number().nonnegative().optional(),
+    defaultPurchasePrice: z.coerce.number().nonnegative().optional(),
+    defaultStock: z.coerce.number().nonnegative().optional(),
+    defaultInventoryType: InventoryTypeSchema.optional(),
+});
+export type TGenerateMatrixInput = z.infer<typeof GenerateMatrixInputSchema>;
+
+export const OptionValuesMapSchema = z.record(z.string(), z.string());
+export type TOptionValuesMap = z.infer<typeof OptionValuesMapSchema>;
+
 export const ProductVariantModelSchema = createSelectSchema(productVariantsTable);
 export type TProductVariantModel = z.infer<typeof ProductVariantModelSchema>;
 
@@ -37,9 +110,10 @@ export const ProductVariantPublicSchema = z.object({
     id: z.string(),
     productId: z.string(),
     title: z.string(),
-    weightValue: z.number(),
-    weightUnit: WeightUnitSchema,
     sku: z.string(),
+    optionValues: OptionValuesMapSchema.default({}),
+    signature: z.string(),
+    inventoryType: InventoryTypeSchema.default("discrete"),
     sellPrice: z.number(),
     stock: z.number(),
     poolConsumptionRate: z.number().nullable().optional(),
@@ -58,9 +132,10 @@ export type TProductVariant = z.infer<typeof ProductVariantSchema>;
 
 export const CreateProductVariantSchema = z.object({
     title: z.string().trim().min(1).optional(),
-    weightValue: z.coerce.number().positive("Weight must be greater than 0"),
-    weightUnit: WeightUnitSchema,
     sku: z.string().trim().min(1, "SKU cannot be empty").optional(),
+    optionValues: OptionValuesMapSchema.default({}),
+    signature: z.string().trim().optional(),
+    inventoryType: InventoryTypeSchema.optional(),
     purchasePrice: z.coerce.number().nonnegative("Purchase price must be a non-negative number"),
     sellPrice: z.coerce.number().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number().nonnegative("Stock must be a non-negative number").default(0),
@@ -99,6 +174,7 @@ export const GetProductBaseSchema = ProductModelSchema.omit({
 
 export const GetProductSchema = GetProductBaseSchema.extend({
     categories: z.array(ProductCategoryItemSchema).default([]),
+    options: z.array(ProductOptionItemSchema).default([]),
     variants: z.array(ProductVariantSchema).default([]),
 });
 export type TGetProduct = z.infer<typeof GetProductSchema>;
@@ -116,6 +192,7 @@ export const GetProductPublicBaseSchema = ProductModelSchema.omit({
 
 export const GetProductPublicSchema = GetProductPublicBaseSchema.extend({
     categories: z.array(ProductCategoryItemSchema).default([]),
+    options: z.array(ProductOptionItemSchema).default([]),
     variants: z.array(ProductVariantPublicSchema).default([]),
 });
 export type TGetProductPublic = z.infer<typeof GetProductPublicSchema>;
@@ -143,9 +220,22 @@ export const PriceRangeFacetSchema = z.object({
 });
 export type TPriceRangeFacet = z.infer<typeof PriceRangeFacetSchema>;
 
+export const OptionFacetValueSchema = z.object({
+    value: z.string(),
+    count: z.number().int().nonnegative(),
+});
+export type TOptionFacetValue = z.infer<typeof OptionFacetValueSchema>;
+
+export const OptionFacetSchema = z.object({
+    name: z.string(),
+    values: z.array(OptionFacetValueSchema),
+});
+export type TOptionFacet = z.infer<typeof OptionFacetSchema>;
+
 export const ProductFacetsSchema = z.object({
     categories: z.array(CategoryFacetSchema),
     tags: z.array(TagFacetSchema),
+    options: z.array(OptionFacetSchema).default([]),
     priceRange: PriceRangeFacetSchema,
 });
 export type TProductFacets = z.infer<typeof ProductFacetsSchema>;
@@ -198,6 +288,7 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
 }).extend({
     categoryIds: z.array(z.string().trim().min(1)).optional(),
     primaryCategoryId: z.string().trim().min(1).optional(),
+    options: z.array(CreateProductOptionSchema).optional(),
     variants: z.array(CreateProductVariantSchema).optional(),
 }).omit({ deletedAt: true });
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
@@ -230,6 +321,7 @@ export const ProductFilterSchema = z.object({
     search: z.string().trim().min(1).max(100).optional(),
     category: z.string().trim().min(1).max(100).optional(),
     tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+    options: z.record(z.string(), z.string()).optional(),
     minPrice: z.coerce.number<string>().nonnegative("Minimum price must be a non-negative number").optional(),
     maxPrice: z.coerce.number<string>().nonnegative("Maximum price must be a non-negative number").optional(),
     inStock: QueryBooleanSchema.optional(),

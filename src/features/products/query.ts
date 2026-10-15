@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, gte, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import z from "zod";
-import { categoriesTable, productCategoriesTable, productsTable } from "@/lib/drizzle/schemas/public";
+import { categoriesTable, productCategoriesTable, productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
 import { db } from "@/lib/drizzle";
 import { ProductFacetsSchema, type TProductFacets, type TProductSort, type TProductStatus } from "./types";
 
@@ -48,6 +48,7 @@ export interface TProductFilterFields {
     search?: string;
     category?: string;
     tags?: string[];
+    options?: Record<string, string>;
     minPrice?: number;
     maxPrice?: number;
     inStock?: boolean;
@@ -165,6 +166,16 @@ export const buildProductConditions = (
         conditions.push(sql`${productsTable.tags} ?| ${sql.param(query.tags)}`);
     }
 
+    if (query.options && Object.keys(query.options).length > 0) {
+        const jsonFilter = JSON.stringify(query.options);
+        conditions.push(sql`EXISTS (
+            SELECT 1 FROM ${productVariantsTable} pv
+            WHERE pv.product_id = ${productsTable.id}
+              AND pv.is_active = true
+              AND pv.option_values @> ${jsonFilter}::jsonb
+        )`);
+    }
+
     if (query.minPrice !== undefined) {
         conditions.push(gte(productsTable.sellPrice, query.minPrice));
     }
@@ -217,6 +228,26 @@ export const getProductFacets = async (
                 LIMIT 30
             ) s
         ),
+        option_facets AS (
+            SELECT COALESCE(json_agg(json_build_object('name', opt_name, 'values', opt_vals)), '[]'::json) AS options
+            FROM (
+                SELECT 
+                    opt_name,
+                    json_agg(json_build_object('value', opt_val, 'count', cnt) ORDER BY cnt DESC) AS opt_vals
+                FROM (
+                    SELECT 
+                        kv.key AS opt_name,
+                        kv.value AS opt_val,
+                        count(DISTINCT m.id)::int AS cnt
+                    FROM matched m
+                    JOIN ${productVariantsTable} pv ON pv.product_id = m.id AND pv.is_active = true
+                    CROSS JOIN LATERAL jsonb_each_text(pv.option_values) AS kv(key, value)
+                    GROUP BY kv.key, kv.value
+                ) grouped_opts
+                GROUP BY opt_name
+                ORDER BY opt_name ASC
+            ) s
+        ),
         price_bounds AS (
             SELECT 
                 COALESCE(MIN(sell_price), 0)::float AS min_price,
@@ -226,6 +257,7 @@ export const getProductFacets = async (
         SELECT 
             COALESCE((SELECT categories FROM cat_counts), '[]'::json) AS categories,
             COALESCE((SELECT tags FROM tag_counts), '[]'::json) AS tags,
+            COALESCE((SELECT options FROM option_facets), '[]'::json) AS options,
             (SELECT json_build_object('min', min_price, 'max', max_price) FROM price_bounds) AS "priceRange";
     `;
 
@@ -244,11 +276,13 @@ export const getProductFacets = async (
 
     const categories = parseJsonField(row.categories, []) as Array<{ id: string; name: string; slug: string; count: number }>;
     const tags = parseJsonField(row.tags, []) as Array<{ name: string; count: number }>;
+    const options = parseJsonField(row.options, []) as Array<{ name: string; values: Array<{ value: string; count: number }> }>;
     const priceRange = parseJsonField(row.priceRange, { min: 0, max: 0 }) as { min: number; max: number };
 
     return ProductFacetsSchema.parse({
         categories,
         tags,
+        options,
         priceRange: {
             min: Number(priceRange.min ?? 0),
             max: Number(priceRange.max ?? 0),
@@ -285,16 +319,38 @@ export const parseProductQuery = <TSchema extends z.ZodTypeAny>(
     url: URL,
     schema: TSchema,
 ): z.infer<TSchema> => {
-    const params: Record<string, string | string[]> = {};
+    const params: Record<string, unknown> = {};
+    const options: Record<string, string> = {};
 
     for (const key of url.searchParams.keys()) {
         const values = url.searchParams.getAll(key);
+        if (key.startsWith("option_")) {
+            const optName = key.replace(/^option_/, "").trim();
+            if (optName && values[0]) {
+                options[optName] = values[0].trim();
+            }
+            continue;
+        }
+
+        const match = key.match(/^options\[(.*)\]$/);
+        if (match && match[1]) {
+            const optName = match[1].trim();
+            if (optName && values[0]) {
+                options[optName] = values[0].trim();
+            }
+            continue;
+        }
+
         const paramKey = key === "tag" ? "tags" : key;
         if (paramKey === "tags" || values.length > 1) {
             params[paramKey] = values;
         } else {
             params[paramKey] = values[0];
         }
+    }
+
+    if (Object.keys(options).length > 0) {
+        params.options = options;
     }
 
     return schema.parse(params);

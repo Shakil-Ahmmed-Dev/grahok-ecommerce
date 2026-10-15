@@ -1,12 +1,19 @@
 import {
     AdminProductsListSchema,
+    CreateOptionValueSchema,
+    CreateProductOptionSchema,
     CreateProductVariantSchema,
+    GenerateMatrixInputSchema,
     GetProductPublicSchema,
     GetProductSchema,
     GetProductsPublicSchema,
+    OptionValueItemSchema,
+    ProductOptionItemSchema,
     ProductsListSchema,
     ProductSuggestionsSchema,
     ProductVariantSchema,
+    UpdateOptionValueSchema,
+    UpdateProductOptionSchema,
     UpdateProductVariantSchema,
     type TAdminProductQuery,
     type TAdminProductsList,
@@ -25,10 +32,25 @@ import {
     type TUpdateProductVariantInput,
     type TSuggestQuery,
     type TProductSuggestions,
+    type TCreateProductOptionInput,
+    type TUpdateProductOptionInput,
+    type TCreateOptionValueInput,
+    type TUpdateOptionValueInput,
+    type TGenerateMatrixInput,
+    type TProductOptionItem,
+    type TOptionValueItem,
 } from "./types";
 import { BadRequestError, ConflictError, NotFoundError, PermanentRedirectError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
-import { categoriesTable, productCategoriesTable, productsTable, productSlugRedirectsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
+import {
+    categoriesTable,
+    productCategoriesTable,
+    productOptionsTable,
+    productOptionValuesTable,
+    productsTable,
+    productSlugRedirectsTable,
+    productVariantsTable,
+} from "@/lib/drizzle/schemas/public";
 import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
@@ -44,7 +66,7 @@ import {
 } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
 import { calculateVariantStock } from "./inventory";
-import type { TWeightUnit } from "./constants";
+import { generateCartesianPermutations, normalizeVariantSignature } from "./matrix";
 
 const buildPaginationMeta = (
     total: number | undefined,
@@ -72,13 +94,27 @@ function mapProductCategories<T extends {
     inventoryType?: string;
     baseWeightUnit?: string | null;
     productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }>;
+    options?: Array<{
+        id: string;
+        productId?: string;
+        name: string;
+        position: number;
+        values?: Array<{
+            id: string;
+            optionId?: string;
+            value: string;
+            position: number;
+            swatchMeta?: string | null;
+        }>;
+    }>;
     variants?: Array<{
         id: string;
         productId: string;
         title: string;
-        weightValue: string | number;
-        weightUnit: string;
         sku: string;
+        optionValues?: Record<string, string> | null;
+        signature?: string;
+        inventoryType?: string | null;
         purchasePrice?: string | number;
         sellPrice: string | number;
         stock: string | number;
@@ -90,7 +126,7 @@ function mapProductCategories<T extends {
         updatedAt?: Date | string;
     }>;
 }>(product: T) {
-    const { productCategories, variants, ...rest } = product;
+    const { productCategories, options, variants, ...rest } = product;
     const invType = (product.inventoryType ?? "discrete") as "discrete" | "shared_pool";
     const masterStock = Number(product.stock ?? 0);
 
@@ -102,21 +138,34 @@ function mapProductCategories<T extends {
             slug: pc.category.slug,
             isPrimary: pc.isPrimary,
         })),
+        options: (options ?? []).map((opt) => ({
+            id: opt.id,
+            productId: opt.productId,
+            name: opt.name,
+            position: Number(opt.position ?? 0),
+            values: (opt.values ?? []).map((v) => ({
+                id: v.id,
+                optionId: v.optionId,
+                value: v.value,
+                position: Number(v.position ?? 0),
+                swatchMeta: v.swatchMeta ?? null,
+            })),
+        })),
         variants: (variants ?? []).map((v) => {
             const rawStock = Number(v.stock);
+            const variantInvType = (v.inventoryType ?? invType) as "discrete" | "shared_pool";
             const computedStock = calculateVariantStock({
                 masterStock,
-                inventoryType: invType,
+                inventoryType: variantInvType,
                 variantStock: rawStock,
-                weightValue: Number(v.weightValue),
-                weightUnit: v.weightUnit as TWeightUnit,
-                baseWeightUnit: (product.baseWeightUnit as TWeightUnit | null | undefined) ?? null,
                 poolConsumptionRate: v.poolConsumptionRate != null ? Number(v.poolConsumptionRate) : null,
             });
 
             return {
                 ...v,
-                weightValue: Number(v.weightValue),
+                optionValues: (v.optionValues && typeof v.optionValues === "object") ? v.optionValues : {},
+                signature: v.signature || normalizeVariantSignature(v.optionValues),
+                inventoryType: variantInvType,
                 sellPrice: Number(v.sellPrice),
                 stock: computedStock,
                 ...(v.poolConsumptionRate != null ? { poolConsumptionRate: Number(v.poolConsumptionRate) } : {}),
@@ -269,9 +318,17 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
                     category: true,
                 },
             },
+            options: {
+                orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
+                with: {
+                    values: {
+                        orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
+                    },
+                },
+            },
             variants: {
                 where: (variant, { eq }) => eq(variant.isActive, true),
-                orderBy: (variant, { asc }) => [asc(variant.weightValue)],
+                orderBy: (variant, { asc }) => [asc(variant.createdAt)],
             },
         },
     });
@@ -309,8 +366,16 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
                     category: true,
                 },
             },
+            options: {
+                orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
+                with: {
+                    values: {
+                        orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
+                    },
+                },
+            },
             variants: {
-                orderBy: (variant, { asc }) => [asc(variant.weightValue)],
+                orderBy: (variant, { asc }) => [asc(variant.createdAt)],
             },
         },
     });
@@ -333,8 +398,16 @@ const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> =
                             category: true,
                         },
                     },
+                    options: {
+                        orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
+                        with: {
+                            values: {
+                                orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
+                            },
+                        },
+                    },
                     variants: {
-                        orderBy: (variant, { asc }) => [asc(variant.weightValue)],
+                        orderBy: (variant, { asc }) => [asc(variant.createdAt)],
                     },
                 },
             });
@@ -465,7 +538,7 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         data.publishedAt = new Date();
     }
 
-    const { categoryIds, primaryCategoryId, variants, ...productInsertData } = data;
+    const { categoryIds, primaryCategoryId, options, variants, ...productInsertData } = data;
 
     const explicitSlug = data.slug;
     const baseSlug = explicitSlug
@@ -520,19 +593,48 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         );
     }
 
+    if (options && options.length > 0) {
+        for (let optIdx = 0; optIdx < options.length; optIdx++) {
+            const opt = options[optIdx];
+            const [insertedOpt] = await db.insert(productOptionsTable).values({
+                productId: product.id,
+                name: opt.name,
+                position: opt.position ?? optIdx,
+            }).returning();
+
+            if (opt.values && opt.values.length > 0) {
+                for (let valIdx = 0; valIdx < opt.values.length; valIdx++) {
+                    const val = opt.values[valIdx];
+                    await db.insert(productOptionValuesTable).values({
+                        optionId: insertedOpt.id,
+                        value: val.value,
+                        position: val.position ?? valIdx,
+                        swatchMeta: val.swatchMeta ?? null,
+                    });
+                }
+            }
+        }
+    }
+
     if (variants && variants.length > 0) {
         for (let i = 0; i < variants.length; i++) {
             const v = variants[i];
-            const sku = v.sku?.trim() || `${product.slug}-${v.weightValue}${v.weightUnit}`.toLowerCase();
-            const title = v.title?.trim() || `${v.weightValue}${v.weightUnit}`;
+            const signature = v.signature?.trim() || normalizeVariantSignature(v.optionValues);
+            const title = v.title?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0 ? Object.values(v.optionValues).join(" / ") : "Default");
+            const sku = v.sku?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0
+                ? `${product.slug}-${Object.values(v.optionValues).map((val) => slugify(val).replace(/^-+|-+$/g, "")).join("-")}`
+                : `${product.slug}-default`
+            ).toLowerCase();
             const isDefault = v.isDefault ?? (i === 0);
+            const variantInvType = v.inventoryType ?? product.inventoryType ?? "discrete";
 
             await db.insert(productVariantsTable).values({
                 productId: product.id,
                 title,
-                weightValue: v.weightValue,
-                weightUnit: v.weightUnit,
                 sku,
+                optionValues: v.optionValues ?? {},
+                signature,
+                inventoryType: variantInvType,
                 purchasePrice: v.purchasePrice,
                 sellPrice: v.sellPrice,
                 stock: v.stock ?? 0,
@@ -630,7 +732,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             updateData = { ...updateData, slug: newSlug };
         }
 
-        const { categoryIds, primaryCategoryId, variants, ...productUpdateData } = updateData;
+        const { categoryIds, primaryCategoryId, options, variants, ...productUpdateData } = updateData;
 
         if (categoryIds !== undefined) {
             await db.delete(productCategoriesTable).where(eq(productCategoriesTable.productId, existingProduct.id));
@@ -645,22 +747,54 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             }
         }
 
+        if (options !== undefined) {
+            await db.delete(productOptionsTable).where(eq(productOptionsTable.productId, existingProduct.id));
+            if (options.length > 0) {
+                for (let optIdx = 0; optIdx < options.length; optIdx++) {
+                    const opt = options[optIdx];
+                    const [insertedOpt] = await db.insert(productOptionsTable).values({
+                        productId: existingProduct.id,
+                        name: opt.name,
+                        position: opt.position ?? optIdx,
+                    }).returning();
+
+                    if (opt.values && opt.values.length > 0) {
+                        for (let valIdx = 0; valIdx < opt.values.length; valIdx++) {
+                            const val = opt.values[valIdx];
+                            await db.insert(productOptionValuesTable).values({
+                                optionId: insertedOpt.id,
+                                value: val.value,
+                                position: val.position ?? valIdx,
+                                swatchMeta: val.swatchMeta ?? null,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         if (variants !== undefined) {
             await db.delete(productVariantsTable).where(eq(productVariantsTable.productId, existingProduct.id));
             if (variants.length > 0) {
                 const targetSlug = updateData.slug ?? existingProduct.slug;
                 for (let i = 0; i < variants.length; i++) {
                     const v = variants[i];
-                    const sku = v.sku?.trim() || `${targetSlug}-${v.weightValue}${v.weightUnit}`.toLowerCase();
-                    const title = v.title?.trim() || `${v.weightValue}${v.weightUnit}`;
+                    const signature = v.signature?.trim() || normalizeVariantSignature(v.optionValues);
+                    const title = v.title?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0 ? Object.values(v.optionValues).join(" / ") : "Default");
+                    const sku = v.sku?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0
+                        ? `${targetSlug}-${Object.values(v.optionValues).map((val) => slugify(val).replace(/^-+|-+$/g, "")).join("-")}`
+                        : `${targetSlug}-default`
+                    ).toLowerCase();
                     const isDefault = v.isDefault ?? (i === 0);
+                    const variantInvType = v.inventoryType ?? existingProduct.inventoryType ?? "discrete";
 
                     await db.insert(productVariantsTable).values({
                         productId: existingProduct.id,
                         title,
-                        weightValue: v.weightValue,
-                        weightUnit: v.weightUnit,
                         sku,
+                        optionValues: v.optionValues ?? {},
+                        signature,
+                        inventoryType: variantInvType,
                         purchasePrice: v.purchasePrice,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,
@@ -987,8 +1121,12 @@ const addVariantToProduct = async (
         throw new NotFoundError("Product not found");
     }
 
-    const sku = parsed.sku?.trim() || `${product.slug}-${parsed.weightValue}${parsed.weightUnit}`.toLowerCase();
-    const title = parsed.title?.trim() || `${parsed.weightValue}${parsed.weightUnit}`;
+    const signature = parsed.signature?.trim() || normalizeVariantSignature(parsed.optionValues);
+    const title = parsed.title?.trim() || (parsed.optionValues && Object.keys(parsed.optionValues).length > 0 ? Object.values(parsed.optionValues).join(" / ") : "Default");
+    const sku = (parsed.sku?.trim() || (parsed.optionValues && Object.keys(parsed.optionValues).length > 0
+        ? `${product.slug}-${Object.values(parsed.optionValues).map((val) => slugify(val).replace(/^-+|-+$/g, "")).join("-")}`
+        : `${product.slug}-default`
+    )).toLowerCase();
 
     const existingSku = await db.query.productVariantsTable.findFirst({
         where: (v, { eq }) => eq(v.sku, sku),
@@ -998,17 +1136,16 @@ const addVariantToProduct = async (
         throw new ConflictError(`Variant SKU '${sku}' is already in use`);
     }
 
-    const existingWeight = await db.query.productVariantsTable.findFirst({
+    const existingSignature = await db.query.productVariantsTable.findFirst({
         where: (v, { eq, and }) =>
             and(
                 eq(v.productId, product.id),
-                eq(v.weightValue, parsed.weightValue),
-                eq(v.weightUnit, parsed.weightUnit)
+                eq(v.signature, signature)
             ),
         columns: { id: true },
     });
-    if (existingWeight) {
-        throw new ConflictError(`A variant with weight ${parsed.weightValue}${parsed.weightUnit} already exists for this product`);
+    if (existingSignature) {
+        throw new ConflictError(`A variant with option signature '${signature}' already exists for this product`);
     }
 
     let isDefault = parsed.isDefault;
@@ -1027,37 +1164,39 @@ const addVariantToProduct = async (
         }
     }
 
+    const variantInvType = parsed.inventoryType ?? product.inventoryType ?? "discrete";
+
     const [variant] = await db
         .insert(productVariantsTable)
         .values({
             productId: product.id,
             title,
-            weightValue: parsed.weightValue,
-            weightUnit: parsed.weightUnit,
             sku,
+            optionValues: parsed.optionValues ?? {},
+            signature,
+            inventoryType: variantInvType,
             purchasePrice: parsed.purchasePrice,
             sellPrice: parsed.sellPrice,
-            stock: parsed.stock,
+            stock: parsed.stock ?? 0,
             poolConsumptionRate: parsed.poolConsumptionRate != null ? parsed.poolConsumptionRate : null,
             isDefault,
-            isActive: parsed.isActive,
+            isActive: parsed.isActive ?? true,
             imageUrl: parsed.imageUrl ?? null,
         })
         .returning();
 
     const computedStock = calculateVariantStock({
         masterStock: Number(product.stock),
-        inventoryType: product.inventoryType,
+        inventoryType: variantInvType,
         variantStock: Number(variant.stock),
-        weightValue: Number(variant.weightValue),
-        weightUnit: variant.weightUnit as TWeightUnit,
-        baseWeightUnit: product.baseWeightUnit as TWeightUnit | null,
         poolConsumptionRate: variant.poolConsumptionRate != null ? Number(variant.poolConsumptionRate) : null,
     });
 
     return ProductVariantSchema.parse({
         ...variant,
-        weightValue: Number(variant.weightValue),
+        optionValues: variant.optionValues ?? {},
+        signature: variant.signature,
+        inventoryType: variant.inventoryType,
         purchasePrice: Number(variant.purchasePrice),
         sellPrice: Number(variant.sellPrice),
         stock: computedStock,
@@ -1074,7 +1213,7 @@ const updateVariant = async (
 
     const product = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
-        columns: { id: true, slug: true, stock: true, inventoryType: true, baseWeightUnit: true },
+        columns: { id: true, slug: true, stock: true, inventoryType: true },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
@@ -1097,24 +1236,20 @@ const updateVariant = async (
         }
     }
 
-    const targetWeightValue = parsed.weightValue ?? Number(existingVariant.weightValue);
-    const targetWeightUnit = parsed.weightUnit ?? existingVariant.weightUnit;
-    if (
-        (parsed.weightValue !== undefined && parsed.weightValue !== Number(existingVariant.weightValue)) ||
-        (parsed.weightUnit !== undefined && parsed.weightUnit !== existingVariant.weightUnit)
-    ) {
-        const weightTaken = await db.query.productVariantsTable.findFirst({
+    let nextSignature = existingVariant.signature;
+    if (parsed.optionValues !== undefined || parsed.signature !== undefined) {
+        nextSignature = parsed.signature?.trim() || normalizeVariantSignature(parsed.optionValues ?? existingVariant.optionValues);
+        const signatureTaken = await db.query.productVariantsTable.findFirst({
             where: (v, { eq, and, ne }) =>
                 and(
                     eq(v.productId, product.id),
-                    eq(v.weightValue, targetWeightValue),
-                    eq(v.weightUnit, targetWeightUnit),
+                    eq(v.signature, nextSignature),
                     ne(v.id, variantId)
                 ),
             columns: { id: true },
         });
-        if (weightTaken) {
-            throw new ConflictError(`A variant with weight ${targetWeightValue}${targetWeightUnit} already exists for this product`);
+        if (signatureTaken) {
+            throw new ConflictError(`A variant with option signature '${nextSignature}' already exists for this product`);
         }
     }
 
@@ -1127,23 +1262,27 @@ const updateVariant = async (
 
     const [updated] = await db
         .update(productVariantsTable)
-        .set(parsed)
+        .set({
+            ...parsed,
+            ...(nextSignature !== existingVariant.signature ? { signature: nextSignature } : {}),
+        })
         .where(eq(productVariantsTable.id, variantId))
         .returning();
 
+    const variantInvType = updated.inventoryType ?? product.inventoryType ?? "discrete";
+
     const computedStock = calculateVariantStock({
         masterStock: Number(product.stock),
-        inventoryType: product.inventoryType,
+        inventoryType: variantInvType,
         variantStock: Number(updated.stock),
-        weightValue: Number(updated.weightValue),
-        weightUnit: updated.weightUnit as TWeightUnit,
-        baseWeightUnit: product.baseWeightUnit as TWeightUnit | null,
         poolConsumptionRate: updated.poolConsumptionRate != null ? Number(updated.poolConsumptionRate) : null,
     });
 
     return ProductVariantSchema.parse({
         ...updated,
-        weightValue: Number(updated.weightValue),
+        optionValues: updated.optionValues ?? {},
+        signature: updated.signature,
+        inventoryType: updated.inventoryType,
         purchasePrice: Number(updated.purchasePrice),
         sellPrice: Number(updated.sellPrice),
         stock: computedStock,
@@ -1175,7 +1314,7 @@ const deleteVariant = async (
     if (existingVariant.isDefault) {
         const nextVariant = await db.query.productVariantsTable.findFirst({
             where: (v, { eq }) => eq(v.productId, product.id),
-            orderBy: (v, { asc }) => [asc(v.weightValue)],
+            orderBy: (v, { asc }) => [asc(v.createdAt)],
         });
         if (nextVariant) {
             await db
@@ -1184,6 +1323,385 @@ const deleteVariant = async (
                 .where(eq(productVariantsTable.id, nextVariant.id));
         }
     }
+};
+
+const createProductOption = async (
+    productSlug: TProductSlug,
+    input: TCreateProductOptionInput
+): Promise<TProductOptionItem> => {
+    const parsed = CreateProductOptionSchema.parse(input);
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const existingOption = await db.query.productOptionsTable.findFirst({
+        where: (o, { eq, and }) => and(eq(o.productId, product.id), eq(o.name, parsed.name)),
+    });
+    if (existingOption) {
+        throw new ConflictError(`Option '${parsed.name}' already exists for this product`);
+    }
+
+    const [option] = await db.insert(productOptionsTable).values({
+        productId: product.id,
+        name: parsed.name,
+        position: parsed.position,
+    }).returning();
+
+    let values: TOptionValueItem[] = [];
+    if (parsed.values && parsed.values.length > 0) {
+        values = await db.insert(productOptionValuesTable).values(
+            parsed.values.map((v, idx) => ({
+                optionId: option.id,
+                value: v.value,
+                position: v.position ?? idx,
+                swatchMeta: v.swatchMeta ?? null,
+            }))
+        ).returning();
+    }
+
+    return ProductOptionItemSchema.parse({
+        id: option.id,
+        productId: option.productId,
+        name: option.name,
+        position: option.position,
+        values,
+    });
+};
+
+const updateProductOption = async (
+    productSlug: TProductSlug,
+    optionId: string,
+    input: TUpdateProductOptionInput
+): Promise<TProductOptionItem> => {
+    const parsed = UpdateProductOptionSchema.parse(input);
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const existingOption = await db.query.productOptionsTable.findFirst({
+        where: (o, { eq, and }) => and(eq(o.id, optionId), eq(o.productId, product.id)),
+        with: { values: true },
+    });
+    if (!existingOption) {
+        throw new NotFoundError("Option not found on this product");
+    }
+
+    if (parsed.name && parsed.name !== existingOption.name) {
+        const nameTaken = await db.query.productOptionsTable.findFirst({
+            where: (o, { eq, and, ne }) => and(eq(o.productId, product.id), eq(o.name, parsed.name!), ne(o.id, optionId)),
+        });
+        if (nameTaken) {
+            throw new ConflictError(`Option '${parsed.name}' already exists for this product`);
+        }
+    }
+
+    const [updated] = await db.update(productOptionsTable)
+        .set(parsed)
+        .where(eq(productOptionsTable.id, optionId))
+        .returning();
+
+    return ProductOptionItemSchema.parse({
+        id: updated.id,
+        productId: updated.productId,
+        name: updated.name,
+        position: updated.position,
+        values: existingOption.values ?? [],
+    });
+};
+
+const deleteProductOption = async (
+    productSlug: TProductSlug,
+    optionId: string
+): Promise<void> => {
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const existingOption = await db.query.productOptionsTable.findFirst({
+        where: (o, { eq, and }) => and(eq(o.id, optionId), eq(o.productId, product.id)),
+    });
+    if (!existingOption) {
+        throw new NotFoundError("Option not found on this product");
+    }
+
+    const activeVariants = await db.query.productVariantsTable.findMany({
+        where: (v, { eq, and }) => and(eq(v.productId, product.id), eq(v.isActive, true)),
+        columns: { id: true, optionValues: true },
+    });
+
+    const isUsed = activeVariants.some(
+        (v) => v.optionValues && typeof v.optionValues === "object" && existingOption.name in v.optionValues
+    );
+    if (isUsed) {
+        throw new ConflictError(`Cannot delete option '${existingOption.name}' because it is in use by active variants. Delete or update the variants first.`);
+    }
+
+    await db.delete(productOptionsTable).where(eq(productOptionsTable.id, optionId));
+};
+
+const createOptionValue = async (
+    productSlug: TProductSlug,
+    optionId: string,
+    input: TCreateOptionValueInput
+): Promise<TOptionValueItem> => {
+    const parsed = CreateOptionValueSchema.parse(input);
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const option = await db.query.productOptionsTable.findFirst({
+        where: (o, { eq, and }) => and(eq(o.id, optionId), eq(o.productId, product.id)),
+    });
+    if (!option) {
+        throw new NotFoundError("Option not found on this product");
+    }
+
+    const existingValue = await db.query.productOptionValuesTable.findFirst({
+        where: (ov, { eq, and }) => and(eq(ov.optionId, optionId), eq(ov.value, parsed.value)),
+    });
+    if (existingValue) {
+        throw new ConflictError(`Option value '${parsed.value}' already exists for this option`);
+    }
+
+    const [value] = await db.insert(productOptionValuesTable).values({
+        optionId,
+        value: parsed.value,
+        position: parsed.position,
+        swatchMeta: parsed.swatchMeta ?? null,
+    }).returning();
+
+    return OptionValueItemSchema.parse(value);
+};
+
+const updateOptionValue = async (
+    productSlug: TProductSlug,
+    optionId: string,
+    valueId: string,
+    input: TUpdateOptionValueInput
+): Promise<TOptionValueItem> => {
+    const parsed = UpdateOptionValueSchema.parse(input);
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const option = await db.query.productOptionsTable.findFirst({
+        where: (o, { eq, and }) => and(eq(o.id, optionId), eq(o.productId, product.id)),
+    });
+    if (!option) {
+        throw new NotFoundError("Option not found on this product");
+    }
+
+    const existingValue = await db.query.productOptionValuesTable.findFirst({
+        where: (ov, { eq, and }) => and(eq(ov.id, valueId), eq(ov.optionId, optionId)),
+    });
+    if (!existingValue) {
+        throw new NotFoundError("Option value not found");
+    }
+
+    if (parsed.value && parsed.value !== existingValue.value) {
+        const valTaken = await db.query.productOptionValuesTable.findFirst({
+            where: (ov, { eq, and, ne }) => and(eq(ov.optionId, optionId), eq(ov.value, parsed.value!), ne(ov.id, valueId)),
+        });
+        if (valTaken) {
+            throw new ConflictError(`Option value '${parsed.value}' already exists for this option`);
+        }
+    }
+
+    const [updated] = await db.update(productOptionValuesTable)
+        .set(parsed)
+        .where(eq(productOptionValuesTable.id, valueId))
+        .returning();
+
+    return OptionValueItemSchema.parse(updated);
+};
+
+const deleteOptionValue = async (
+    productSlug: TProductSlug,
+    optionId: string,
+    valueId: string
+): Promise<void> => {
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+        columns: { id: true },
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const option = await db.query.productOptionsTable.findFirst({
+        where: (o, { eq, and }) => and(eq(o.id, optionId), eq(o.productId, product.id)),
+    });
+    if (!option) {
+        throw new NotFoundError("Option not found on this product");
+    }
+
+    const existingValue = await db.query.productOptionValuesTable.findFirst({
+        where: (ov, { eq, and }) => and(eq(ov.id, valueId), eq(ov.optionId, optionId)),
+    });
+    if (!existingValue) {
+        throw new NotFoundError("Option value not found");
+    }
+
+    const activeVariants = await db.query.productVariantsTable.findMany({
+        where: (v, { eq, and }) => and(eq(v.productId, product.id), eq(v.isActive, true)),
+        columns: { id: true, optionValues: true },
+    });
+
+    const isUsed = activeVariants.some(
+        (v) => v.optionValues && typeof v.optionValues === "object" && v.optionValues[option.name] === existingValue.value
+    );
+    if (isUsed) {
+        throw new ConflictError(`Cannot delete option value '${existingValue.value}' because it is in use by active variants. Delete or update the variants first.`);
+    }
+
+    await db.delete(productOptionValuesTable).where(eq(productOptionValuesTable.id, valueId));
+};
+
+const generateVariantMatrix = async (
+    productSlug: TProductSlug,
+    input: TGenerateMatrixInput
+) => {
+    const parsed = GenerateMatrixInputSchema.parse(input);
+    const product = await db.query.productsTable.findFirst({
+        where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
+    });
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    const permutations = generateCartesianPermutations(product.slug, parsed.options, parsed.skuPrefix);
+
+    const defaultSell = parsed.defaultSellPrice ?? Number(product.sellPrice);
+    const defaultPurchase = parsed.defaultPurchasePrice ?? Number(product.purchasePrice);
+    const defaultStock = parsed.defaultStock ?? Number(product.stock);
+    const defaultInvType = parsed.defaultInventoryType ?? product.inventoryType ?? "discrete";
+
+    if (parsed.preview) {
+        return {
+            preview: true,
+            count: permutations.length,
+            matrix: permutations.map((perm, idx) => ({
+                title: perm.title,
+                sku: perm.suggestedSku,
+                optionValues: perm.optionValues,
+                signature: perm.signature,
+                sellPrice: defaultSell,
+                purchasePrice: defaultPurchase,
+                stock: defaultStock,
+                inventoryType: defaultInvType,
+                isDefault: idx === 0,
+            })),
+        };
+    }
+
+    const createdVariants = await db.transaction(async (tx) => {
+        for (let optIdx = 0; optIdx < parsed.options.length; optIdx++) {
+            const opt = parsed.options[optIdx];
+            let existingOption = await tx.query.productOptionsTable.findFirst({
+                where: (o, { eq, and }) => and(eq(o.productId, product.id), eq(o.name, opt.name)),
+            });
+
+            if (!existingOption) {
+                const [newOpt] = await tx.insert(productOptionsTable).values({
+                    productId: product.id,
+                    name: opt.name,
+                    position: optIdx,
+                }).returning();
+                existingOption = newOpt;
+            }
+
+            for (let valIdx = 0; valIdx < opt.values.length; valIdx++) {
+                const val = opt.values[valIdx];
+                const existingVal = await tx.query.productOptionValuesTable.findFirst({
+                    where: (ov, { eq, and }) => and(eq(ov.optionId, existingOption!.id), eq(ov.value, val.value)),
+                });
+
+                if (!existingVal) {
+                    await tx.insert(productOptionValuesTable).values({
+                        optionId: existingOption.id,
+                        value: val.value,
+                        position: valIdx,
+                        swatchMeta: val.swatchMeta ?? null,
+                    });
+                }
+            }
+        }
+
+        const existingDefault = await tx.query.productVariantsTable.findFirst({
+            where: (v, { eq, and }) => and(eq(v.productId, product.id), eq(v.isDefault, true)),
+        });
+
+        const insertedVariants = [];
+        for (let i = 0; i < permutations.length; i++) {
+            const perm = permutations[i];
+            const existing = await tx.query.productVariantsTable.findFirst({
+                where: (v, { eq, and }) => and(eq(v.productId, product.id), eq(v.signature, perm.signature)),
+            });
+
+            if (existing) {
+                insertedVariants.push(existing);
+                continue;
+            }
+
+            let sku = perm.suggestedSku;
+            let counter = 1;
+            while (await tx.query.productVariantsTable.findFirst({ where: (v, { eq }) => eq(v.sku, sku) })) {
+                sku = `${perm.suggestedSku}-${counter}`;
+                counter++;
+            }
+
+            const isDefault = !existingDefault && i === 0;
+
+            const [newVar] = await tx.insert(productVariantsTable).values({
+                productId: product.id,
+                title: perm.title,
+                sku,
+                optionValues: perm.optionValues,
+                signature: perm.signature,
+                inventoryType: defaultInvType,
+                sellPrice: defaultSell,
+                purchasePrice: defaultPurchase,
+                stock: defaultStock,
+                isDefault,
+                isActive: true,
+            }).returning();
+
+            insertedVariants.push(newVar);
+        }
+
+        return insertedVariants;
+    });
+
+    return {
+        preview: false,
+        count: createdVariants.length,
+        variants: createdVariants.map((v) => ({
+            ...v,
+            sellPrice: Number(v.sellPrice),
+            purchasePrice: Number(v.purchasePrice),
+            stock: Number(v.stock),
+        })),
+    };
 };
 
 const productsActions = {
@@ -1201,6 +1719,13 @@ const productsActions = {
     addVariantToProduct,
     updateVariant,
     deleteVariant,
+    createProductOption,
+    updateProductOption,
+    deleteProductOption,
+    createOptionValue,
+    updateOptionValue,
+    deleteOptionValue,
+    generateVariantMatrix,
 };
 
 export default productsActions;
