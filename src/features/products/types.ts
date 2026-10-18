@@ -240,7 +240,6 @@ export const VariantCheckoutSnapshotSchema = z.object({
     currentPrice: z.number(),
     purchasePrice: z.number(),
     weight: z.number().nullable().optional(),
-    taxRate: z.number().nullable().optional(),
     inventoryType: InventoryTypeSchema,
     allowBackorder: z.boolean().default(false),
     availableStock: z.number().nullable(),

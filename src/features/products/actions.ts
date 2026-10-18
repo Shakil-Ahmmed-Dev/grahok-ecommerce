@@ -1762,7 +1762,6 @@ export const getVariantCheckoutSnapshots = async (
             currentPrice: Number(variant.sellPrice),
             purchasePrice: Number(variant.purchasePrice),
             weight: null,
-            taxRate: null,
             inventoryType: effectiveInventoryType,
             allowBackorder: effectiveAllowBackorder,
             availableStock: stockCalc.stock,

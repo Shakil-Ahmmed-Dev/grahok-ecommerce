@@ -29,7 +29,6 @@ async function runCheckoutSnapshotTestSuite() {
         currentPrice: 1250.00,
         purchasePrice: 750.00,
         weight: null,
-        taxRate: null,
         inventoryType: "discrete",
         allowBackorder: false,
         availableStock: 25,
@@ -46,7 +45,6 @@ async function runCheckoutSnapshotTestSuite() {
     console.assert(parsedSnapshot.availableStock === 25, "Available stock parsed correctly");
     console.assert(parsedSnapshot.isPurchasable === true, "Item is purchasable");
     console.assert(parsedSnapshot.weight === null, "Weight is safely nullable");
-    console.assert(parsedSnapshot.taxRate === null, "Tax rate is safely nullable");
 
     // 2. Mock Executor for database responses
     const mockDbData = [
