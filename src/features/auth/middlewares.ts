@@ -8,6 +8,14 @@ export const requireAuthentication = async (headers: Headers) => {
     }
 };
 
+export const requireAuthUser = async (headers: Headers) => {
+    const user = await authActions.getCurrentUser(headers);
+    if (!user) {
+        throw new UnauthorizedError();
+    }
+    return user;
+};
+
 export const requireAdmin = async (headers: Headers) => {
     const user = await authActions.getCurrentUser(headers);
     if (!user) {

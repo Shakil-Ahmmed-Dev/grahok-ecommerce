@@ -6,7 +6,7 @@ export default defineConfig({
     out: './src/lib/drizzle/migrations',
     schema: [
         './src/lib/drizzle/schemas/public.ts',
-        './src/lib/drizzle/schemas/auth.ts'
+        './src/lib/drizzle/schemas/auth.ts',
     ],
     dialect: 'postgresql',
     dbCredentials: {

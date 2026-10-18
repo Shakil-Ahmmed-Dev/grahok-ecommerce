@@ -148,6 +148,13 @@
       "when": 1792314846784,
       "tag": "0020_lean_thanos",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792317859536,
+      "tag": "0021_smooth_magik",
+      "breakpoints": true
     }
   ]
 }
