@@ -27,7 +27,11 @@ export const PATCH = async (request: Request) => {
         const body = await request.json();
         const validated = UpdateCustomerProfileSchema.parse(body);
 
-        const updated = await customerActions.updateCustomerProfile(customer.id, validated);
+        const updated = await customerActions.updateCustomerProfile(customer.id, validated, {
+            actorId: user.id,
+            actorType: "customer",
+            headers: request.headers,
+        });
         return ok(updated);
     } catch (err) {
         return handleError(err);

@@ -1,11 +1,18 @@
 import { db } from "@/lib/drizzle";
-import { customerAddressesTable, customersTable } from "@/lib/drizzle/schemas/public";
+import { account, user } from "@/lib/drizzle/schemas/auth";
+import { customerAddressesTable, customerAuditLogsTable, customersTable, type TCustomerAuditAction } from "@/lib/drizzle/schemas/public";
 import { BadRequestError, NotFoundError } from "@/lib/error";
 import { logger } from "@/lib/pino/logger";
+import { verifyPassword } from "better-auth/crypto";
+import { randomUUID } from "crypto";
 import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { extractClientNetworkMeta, recordCustomerAuditLog } from "./audit";
 import {
+    type ClientAuditMeta,
     CustomerAdminDetailSchema,
     CustomerAddressDTOSchema,
+    CustomerAuditLogDTOSchema,
+    CustomerDataExportSchema,
     CustomerPublicProfileSchema,
     MAX_CUSTOMER_ADDRESSES,
     type TAdminUpdateCustomerInput,
@@ -13,6 +20,10 @@ import {
     type TCustomerAddressDTO,
     type TCustomerAdminDetail,
     type TCustomerAdminList,
+    type TCustomerAnonymizeInput,
+    type TCustomerAuditLogListQuery,
+    type TCustomerAuditLogListResponse,
+    type TCustomerDataExport,
     type TCustomerListQuery,
     type TCustomerPublicProfile,
     type TSetDefaultAddressType,
@@ -185,7 +196,8 @@ export async function getCustomerProfile(
  */
 export async function updateCustomerProfile(
     customerId: string,
-    data: TUpdateCustomerProfileInput
+    data: TUpdateCustomerProfileInput,
+    clientMeta?: ClientAuditMeta
 ): Promise<TCustomerPublicProfile> {
     const existing = await db.query.customersTable.findFirst({
         where: and(eq(customersTable.id, customerId), isNull(customersTable.deletedAt)),
@@ -209,6 +221,34 @@ export async function updateCustomerProfile(
 
     if (!updated) {
         throw new NotFoundError("Customer not found");
+    }
+
+    // Record audit log for profile update with diff of changed fields
+    const diff: Record<string, unknown> = {};
+    if (data.firstName !== undefined && data.firstName !== existing.firstName) {
+        diff.firstName = { from: existing.firstName, to: data.firstName };
+    }
+    if (data.lastName !== undefined && data.lastName !== existing.lastName) {
+        diff.lastName = { from: existing.lastName, to: data.lastName };
+    }
+    if (data.phone !== undefined && data.phone !== existing.phone) {
+        diff.phone = { from: existing.phone, to: data.phone };
+    }
+    if (data.avatarUrl !== undefined && data.avatarUrl !== existing.avatarUrl) {
+        diff.avatarUrl = { from: existing.avatarUrl, to: data.avatarUrl };
+    }
+
+    if (Object.keys(diff).length > 0) {
+        await recordCustomerAuditLog({
+            customerId,
+            actorId: clientMeta?.actorId ?? existing.authUserId,
+            actorType: clientMeta?.actorType ?? "customer",
+            action: "profile_updated",
+            changes: diff,
+            headers: clientMeta?.headers,
+            ipAddress: clientMeta?.ipAddress,
+            userAgent: clientMeta?.userAgent,
+        });
     }
 
     return getCustomerProfile({ customerId });
@@ -268,7 +308,8 @@ export function buildAtomicDefaultAddressSql(
 export async function setDefaultAddress(
     customerId: string,
     addressId: string,
-    type: TSetDefaultAddressType
+    type: TSetDefaultAddressType,
+    clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAddressDTO> {
     // 1. Verify target address belongs to customer and is not soft deleted
     const target = await db.query.customerAddressesTable.findFirst({
@@ -297,6 +338,20 @@ export async function setDefaultAddress(
         throw new NotFoundError("Address not found");
     }
 
+    await recordCustomerAuditLog({
+        customerId,
+        actorId: clientMeta?.actorId ?? null,
+        actorType: clientMeta?.actorType ?? "customer",
+        action: "default_address_changed",
+        changes: {
+            addressId,
+            defaultType: type,
+        },
+        headers: clientMeta?.headers,
+        ipAddress: clientMeta?.ipAddress,
+        userAgent: clientMeta?.userAgent,
+    });
+
     return CustomerAddressDTOSchema.parse(updated);
 }
 
@@ -305,7 +360,8 @@ export async function setDefaultAddress(
  */
 export async function addCustomerAddress(
     customerId: string,
-    data: TCreateCustomerAddressInput
+    data: TCreateCustomerAddressInput,
+    clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAddressDTO> {
     // 1. Quota check: active addresses count
     const [countResult] = await db
@@ -354,14 +410,32 @@ export async function addCustomerAddress(
 
     // Atomically promote defaults if requested
     if (shouldDefaultShipping) {
-        await setDefaultAddress(customerId, newAddress.id, "shipping");
+        await setDefaultAddress(customerId, newAddress.id, "shipping", clientMeta);
     }
     if (shouldDefaultBilling) {
-        await setDefaultAddress(customerId, newAddress.id, "billing");
+        await setDefaultAddress(customerId, newAddress.id, "billing", clientMeta);
     }
 
     const finalAddress = await db.query.customerAddressesTable.findFirst({
         where: eq(customerAddressesTable.id, newAddress.id),
+    });
+
+    await recordCustomerAuditLog({
+        customerId,
+        actorId: clientMeta?.actorId ?? null,
+        actorType: clientMeta?.actorType ?? "customer",
+        action: "address_created",
+        changes: {
+            addressId: newAddress.id,
+            recipientName: newAddress.recipientName,
+            city: newAddress.city,
+            postalCode: newAddress.postalCode,
+            countryCode: newAddress.countryCode,
+            addressType: newAddress.addressType,
+        },
+        headers: clientMeta?.headers,
+        ipAddress: clientMeta?.ipAddress,
+        userAgent: clientMeta?.userAgent,
     });
 
     return CustomerAddressDTOSchema.parse(finalAddress);
@@ -373,7 +447,8 @@ export async function addCustomerAddress(
 export async function updateCustomerAddress(
     customerId: string,
     addressId: string,
-    data: TUpdateCustomerAddressInput
+    data: TUpdateCustomerAddressInput,
+    clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAddressDTO> {
     const existing = await db.query.customerAddressesTable.findFirst({
         where: and(
@@ -408,14 +483,33 @@ export async function updateCustomerAddress(
     }
 
     if (isDefaultShipping) {
-        await setDefaultAddress(customerId, addressId, "shipping");
+        await setDefaultAddress(customerId, addressId, "shipping", clientMeta);
     }
     if (isDefaultBilling) {
-        await setDefaultAddress(customerId, addressId, "billing");
+        await setDefaultAddress(customerId, addressId, "billing", clientMeta);
     }
 
     const finalAddress = await db.query.customerAddressesTable.findFirst({
         where: eq(customerAddressesTable.id, addressId),
+    });
+
+    // Record audit log for address update with diff
+    const diff: Record<string, unknown> = { addressId };
+    for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined && (existing as Record<string, unknown>)[key] !== value) {
+            diff[key] = { from: (existing as Record<string, unknown>)[key], to: value };
+        }
+    }
+
+    await recordCustomerAuditLog({
+        customerId,
+        actorId: clientMeta?.actorId ?? null,
+        actorType: clientMeta?.actorType ?? "customer",
+        action: "address_updated",
+        changes: diff,
+        headers: clientMeta?.headers,
+        ipAddress: clientMeta?.ipAddress,
+        userAgent: clientMeta?.userAgent,
     });
 
     return CustomerAddressDTOSchema.parse(finalAddress);
@@ -427,7 +521,8 @@ export async function updateCustomerAddress(
  */
 export async function deleteCustomerAddress(
     customerId: string,
-    addressId: string
+    addressId: string,
+    clientMeta?: ClientAuditMeta
 ): Promise<{ success: boolean; deletedAddressId: string }> {
     const existing = await db.query.customerAddressesTable.findFirst({
         where: and(
@@ -469,13 +564,24 @@ export async function deleteCustomerAddress(
 
         if (nextAddress) {
             if (existing.isDefaultShipping) {
-                await setDefaultAddress(customerId, nextAddress.id, "shipping");
+                await setDefaultAddress(customerId, nextAddress.id, "shipping", clientMeta);
             }
             if (existing.isDefaultBilling) {
-                await setDefaultAddress(customerId, nextAddress.id, "billing");
+                await setDefaultAddress(customerId, nextAddress.id, "billing", clientMeta);
             }
         }
     }
+
+    await recordCustomerAuditLog({
+        customerId,
+        actorId: clientMeta?.actorId ?? null,
+        actorType: clientMeta?.actorType ?? "customer",
+        action: "address_deleted",
+        changes: { addressId },
+        headers: clientMeta?.headers,
+        ipAddress: clientMeta?.ipAddress,
+        userAgent: clientMeta?.userAgent,
+    });
 
     return { success: true, deletedAddressId: addressId };
 }
@@ -575,7 +681,8 @@ export async function getCustomerAdminById(id: string): Promise<TCustomerAdminDe
  */
 export async function updateCustomerAdmin(
     id: string,
-    data: TAdminUpdateCustomerInput
+    data: TAdminUpdateCustomerInput,
+    clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAdminDetail> {
     const existing = await db.query.customersTable.findFirst({
         where: eq(customersTable.id, id),
@@ -606,7 +713,267 @@ export async function updateCustomerAdmin(
         throw new NotFoundError("Customer not found");
     }
 
+    // Record audit log for admin modifications with diff
+    const diff: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(data)) {
+        if (val !== undefined && (existing as Record<string, unknown>)[key] !== val) {
+            diff[key] = { from: (existing as Record<string, unknown>)[key], to: val };
+        }
+    }
+
+    if (Object.keys(diff).length > 0) {
+        let action: TCustomerAuditAction = "profile_updated";
+        if (data.riskScore !== undefined && data.riskScore !== existing.riskScore) {
+            action = "risk_score_adjusted";
+        } else if (data.adminNotes !== undefined && data.adminNotes !== existing.adminNotes) {
+            action = "admin_note_added";
+        }
+
+        await recordCustomerAuditLog({
+            customerId: id,
+            actorId: clientMeta?.actorId ?? null,
+            actorType: clientMeta?.actorType ?? "admin",
+            action,
+            changes: diff,
+            headers: clientMeta?.headers,
+            ipAddress: clientMeta?.ipAddress,
+            userAgent: clientMeta?.userAgent,
+        });
+    }
+
     return getCustomerAdminById(id);
+}
+
+/**
+ * Check if a customer has any active or in-progress orders.
+ * Returns boolean (currently false as orders module is separate).
+ */
+export async function checkActiveCustomerOrders(customerId: string): Promise<boolean> {
+    if (!customerId) return false;
+    // Orders table integration: when orders table is present,
+    // query active orders (e.g. status in ['pending', 'processing', 'shipped']).
+    return false;
+}
+
+/**
+ * Export customer profile, addresses, and audit logs conforming to GDPR Right to Data Portability.
+ */
+export async function exportCustomerData(
+    customerId: string,
+    clientMeta?: ClientAuditMeta
+): Promise<TCustomerDataExport> {
+    const customer = await getCustomerProfile({ customerId });
+    if (!customer) {
+        throw new NotFoundError("Customer not found");
+    }
+
+    const auditLogs = await db.query.customerAuditLogsTable.findMany({
+        where: eq(customerAuditLogsTable.customerId, customerId),
+        orderBy: [desc(customerAuditLogsTable.createdAt)],
+    });
+
+    const exportPayload: TCustomerDataExport = {
+        exportVersion: "1.0",
+        exportedAt: new Date().toISOString(),
+        customer,
+        addresses: customer.addresses ?? [],
+        auditLogs: auditLogs.map((log) => CustomerAuditLogDTOSchema.parse(log)),
+    };
+
+    await recordCustomerAuditLog({
+        customerId,
+        actorId: clientMeta?.actorId ?? customer.authUserId,
+        actorType: clientMeta?.actorType ?? "customer",
+        action: "data_exported",
+        changes: {
+            exportVersion: "1.0",
+            totalAddresses: exportPayload.addresses.length,
+            totalAuditLogs: exportPayload.auditLogs.length,
+        },
+        headers: clientMeta?.headers,
+        ipAddress: clientMeta?.ipAddress,
+        userAgent: clientMeta?.userAgent,
+    });
+
+    return CustomerDataExportSchema.parse(exportPayload);
+}
+
+/**
+ * GDPR Right to Erasure / Pseudonymization Pipeline.
+ * 1. Verifies customer exists and is not already anonymized.
+ * 2. Checks active orders safety gate.
+ * 3. Verifies password (if credential provider) or confirmation text (if OAuth-only).
+ * 4. Hard deletes customer addresses.
+ * 5. Redacts previous audit logs changes/IP/UA for this customer.
+ * 6. Anonymizes customer profile in customersTable.
+ * 7. Deletes Better-Auth user from auth.user (cascading sessions and accounts).
+ * 8. Records final customer_anonymized audit log.
+ */
+export async function anonymizeCustomer(
+    customerId: string,
+    authUserId: string,
+    input: TCustomerAnonymizeInput,
+    clientMeta?: ClientAuditMeta
+): Promise<{ success: boolean; message: string }> {
+    const customer = await db.query.customersTable.findFirst({
+        where: eq(customersTable.id, customerId),
+    });
+
+    if (!customer) {
+        throw new NotFoundError("Customer not found");
+    }
+
+    if (customer.isAnonymized) {
+        throw new BadRequestError("Customer account is already anonymized");
+    }
+
+    const hasActiveOrders = await checkActiveCustomerOrders(customerId);
+    if (hasActiveOrders) {
+        throw new BadRequestError("Cannot anonymize account while orders are active or in progress");
+    }
+
+    // Verification check:
+    // If user has a password in auth.account (providerId === 'credential'), verify input.password
+    // If user is OAuth-only, require confirmationText === 'DELETE MY ACCOUNT'
+    const credentialAccount = await db.query.account.findFirst({
+        where: and(
+            eq(account.userId, authUserId),
+            eq(account.providerId, "credential")
+        ),
+    });
+
+    if (credentialAccount?.password) {
+        if (!input.password) {
+            throw new BadRequestError("Password is required to confirm account deletion");
+        }
+        const isValid = await verifyPassword({
+            hash: credentialAccount.password,
+            password: input.password,
+        });
+        if (!isValid) {
+            throw new BadRequestError("Invalid password provided");
+        }
+    } else {
+        if (input.confirmationText !== "DELETE MY ACCOUNT") {
+            throw new BadRequestError("Must type 'DELETE MY ACCOUNT' to confirm deletion");
+        }
+    }
+
+    // Record anonymization request
+    await recordCustomerAuditLog({
+        customerId,
+        actorId: authUserId,
+        actorType: "customer",
+        action: "anonymization_requested",
+        changes: { reason: "gdpr_erasure_request" },
+        headers: clientMeta?.headers,
+        ipAddress: clientMeta?.ipAddress,
+        userAgent: clientMeta?.userAgent,
+    });
+
+    // Hard delete customer addresses
+    await db.delete(customerAddressesTable).where(eq(customerAddressesTable.customerId, customerId));
+
+    // Redact previous customer audit logs changes and network metadata
+    await db
+        .update(customerAuditLogsTable)
+        .set({
+            changes: { redacted: true, reason: "gdpr_erasure" },
+            ipAddress: null,
+            userAgent: null,
+        })
+        .where(eq(customerAuditLogsTable.customerId, customerId));
+
+    // Anonymize customer profile record
+    const anonymizedEmail = `anonymized_${randomUUID()}@deleted.local`;
+    await db
+        .update(customersTable)
+        .set({
+            email: anonymizedEmail,
+            firstName: "Anonymized",
+            lastName: "",
+            phone: null,
+            avatarUrl: null,
+            adminNotes: null,
+            tags: [],
+            metadata: {},
+            status: "archived",
+            isAnonymized: true,
+            anonymizedAt: new Date(),
+            authUserId: null,
+            updatedAt: new Date(),
+        })
+        .where(eq(customersTable.id, customerId));
+
+    // Delete Better-Auth user from auth.user (cascades sessions and accounts)
+    await db.delete(user).where(eq(user.id, authUserId));
+
+    // Insert final audit log
+    const networkMeta = extractClientNetworkMeta(clientMeta?.headers);
+    await db.insert(customerAuditLogsTable).values({
+        customerId,
+        actorId: authUserId,
+        actorType: "customer",
+        action: "customer_anonymized",
+        changes: {
+            reason: "gdpr_erasure_completed",
+            anonymizedAt: new Date().toISOString(),
+        },
+        ipAddress: clientMeta?.ipAddress ?? networkMeta.ipAddress,
+        userAgent: clientMeta?.userAgent ?? networkMeta.userAgent,
+    });
+
+    return {
+        success: true,
+        message: "Customer account successfully anonymized and deleted",
+    };
+}
+
+/**
+ * Admin: Get paginated customer audit logs.
+ */
+export async function getCustomerAuditLogs(
+    customerId: string,
+    query: TCustomerAuditLogListQuery
+): Promise<TCustomerAuditLogListResponse> {
+    const customer = await db.query.customersTable.findFirst({
+        where: eq(customersTable.id, customerId),
+    });
+
+    if (!customer) {
+        throw new NotFoundError("Customer not found");
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const offset = (page - 1) * limit;
+
+    const [countResult] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(customerAuditLogsTable)
+        .where(eq(customerAuditLogsTable.customerId, customerId));
+
+    const totalCount = countResult?.count ?? 0;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+
+    const logs = await db.query.customerAuditLogsTable.findMany({
+        where: eq(customerAuditLogsTable.customerId, customerId),
+        orderBy: [desc(customerAuditLogsTable.createdAt)],
+        limit,
+        offset,
+    });
+
+    return {
+        items: logs.map((l) => CustomerAuditLogDTOSchema.parse(l)),
+        pagination: {
+            totalCount,
+            page,
+            limit,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+        },
+    };
 }
 
 const customerActions = {
@@ -621,6 +988,10 @@ const customerActions = {
     listCustomersAdmin,
     getCustomerAdminById,
     updateCustomerAdmin,
+    checkActiveCustomerOrders,
+    exportCustomerData,
+    anonymizeCustomer,
+    getCustomerAuditLogs,
 };
 
 export default customerActions;

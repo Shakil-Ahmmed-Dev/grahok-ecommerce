@@ -21,8 +21,9 @@ import {
     uuid,
 } from "drizzle-orm/pg-core";
 
-export const productStatusEnum = pgEnum("product_status", PRODUCT_STATUSES);
-export const inventoryTypeEnum = pgEnum("inventory_type", INVENTORY_TYPES);
+/* ==========================================================================
+   Customer Enums & Constants
+   ========================================================================== */
 
 export const CUSTOMER_TYPES = ["registered", "guest"] as const;
 export const customerTypeEnum = pgEnum("customer_type", CUSTOMER_TYPES);
@@ -33,11 +34,144 @@ export const customerStatusEnum = pgEnum("customer_status", CUSTOMER_STATUSES);
 export const ADDRESS_TYPES = ["shipping", "billing", "both"] as const;
 export const addressTypeEnum = pgEnum("address_type", ADDRESS_TYPES);
 
+export const CUSTOMER_AUDIT_ACTOR_TYPES = ["customer", "admin", "system"] as const;
+export type TCustomerAuditActorType = (typeof CUSTOMER_AUDIT_ACTOR_TYPES)[number];
+
+export const CUSTOMER_AUDIT_ACTIONS = [
+    "profile_updated",
+    "address_created",
+    "address_updated",
+    "address_deleted",
+    "default_address_changed",
+    "anonymization_requested",
+    "customer_anonymized",
+    "data_exported",
+    "admin_note_added",
+    "risk_score_adjusted",
+] as const;
+export type TCustomerAuditAction = (typeof CUSTOMER_AUDIT_ACTIONS)[number];
+
+/* ==========================================================================
+   Product Enums & Types
+   ========================================================================== */
+
+export const productStatusEnum = pgEnum("product_status", PRODUCT_STATUSES);
+export const inventoryTypeEnum = pgEnum("inventory_type", INVENTORY_TYPES);
+
 export const tsvector = customType<{ data: string }>({
     dataType() {
         return "tsvector";
     },
 });
+
+/* ==========================================================================
+   Customer Tables
+   ========================================================================== */
+
+export const customersTable = pgTable(
+    "customers",
+    {
+        id: uuid().primaryKey().$default(randomUUID),
+        authUserId: text("auth_user_id")
+            .references(() => user.id, { onDelete: "set null" })
+            .unique(),
+        customerType: customerTypeEnum("customer_type").notNull().default("registered"),
+        status: customerStatusEnum("status").notNull().default("active"),
+        email: text().notNull(),
+        firstName: text("first_name"),
+        lastName: text("last_name"),
+        phone: text("phone"),
+        avatarUrl: text("avatar_url"),
+        riskScore: integer("risk_score").notNull().default(0),
+        adminNotes: text("admin_notes"),
+        tags: jsonb("tags").$type<string[]>().notNull().default([]),
+        metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+        totalOrders: integer("total_orders").notNull().default(0),
+        totalSpent: numeric("total_spent", { scale: 2 }).notNull().default("0.00"),
+        lastOrderAt: timestamp("last_order_at"),
+        isAnonymized: boolean("is_anonymized").notNull().default(false),
+        anonymizedAt: timestamp("anonymized_at"),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+        updatedAt: timestamp("updated_at")
+            .defaultNow()
+            .$onUpdate(() => /* @__PURE__ */ new Date())
+            .notNull(),
+        deletedAt: timestamp("deleted_at"),
+    },
+    (table) => [
+        index("customers_email_idx").on(table.email),
+        index("customers_auth_user_id_idx").on(table.authUserId),
+        index("customers_status_type_created_idx").on(table.status, table.customerType, table.createdAt),
+        index("customers_deleted_at_idx").on(table.deletedAt),
+        index("customers_email_trgm_idx").using("gin", table.email.op("gin_trgm_ops")),
+        index("customers_first_name_trgm_idx").using("gin", table.firstName.op("gin_trgm_ops")),
+        index("customers_last_name_trgm_idx").using("gin", table.lastName.op("gin_trgm_ops")),
+        index("customers_phone_trgm_idx").using("gin", table.phone.op("gin_trgm_ops")),
+    ]
+);
+
+export const customerAddressesTable = pgTable(
+    "customer_addresses",
+    {
+        id: uuid().primaryKey().$default(randomUUID),
+        customerId: uuid("customer_id")
+            .notNull()
+            .references(() => customersTable.id, { onDelete: "cascade" }),
+        recipientName: text("recipient_name").notNull(),
+        company: text("company"),
+        phone: text("phone").notNull(),
+        addressLine1: text("address_line1").notNull(),
+        addressLine2: text("address_line2"),
+        city: text("city").notNull(),
+        state: text("state"),
+        postalCode: text("postal_code").notNull(),
+        countryCode: text("country_code").notNull(),
+        addressType: addressTypeEnum("address_type").notNull().default("both"),
+        isDefaultShipping: boolean("is_default_shipping").notNull().default(false),
+        isDefaultBilling: boolean("is_default_billing").notNull().default(false),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+        updatedAt: timestamp("updated_at")
+            .defaultNow()
+            .$onUpdate(() => /* @__PURE__ */ new Date())
+            .notNull(),
+        deletedAt: timestamp("deleted_at"),
+    },
+    (table) => [
+        index("customer_addresses_customer_id_idx").on(table.customerId),
+        index("customer_addresses_deleted_at_idx").on(table.deletedAt),
+        uniqueIndex("customer_addresses_unique_default_shipping")
+            .on(table.customerId)
+            .where(sql`${table.isDefaultShipping} = true AND ${table.deletedAt} IS NULL`),
+        uniqueIndex("customer_addresses_unique_default_billing")
+            .on(table.customerId)
+            .where(sql`${table.isDefaultBilling} = true AND ${table.deletedAt} IS NULL`),
+    ]
+);
+
+export const customerAuditLogsTable = pgTable(
+    "customer_audit_logs",
+    {
+        id: uuid().primaryKey().$default(randomUUID),
+        customerId: uuid("customer_id").references(() => customersTable.id, { onDelete: "set null" }),
+        actorId: text("actor_id"),
+        actorType: text("actor_type").notNull().default("customer"),
+        action: text("action").notNull(),
+        changes: jsonb("changes").$type<Record<string, unknown>>().notNull().default({}),
+        ipAddress: text("ip_address"),
+        userAgent: text("user_agent"),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+    },
+    (table) => [
+        index("customer_audit_logs_customer_created_idx").on(table.customerId, table.createdAt),
+        index("customer_audit_logs_action_idx").on(table.action),
+        index("customer_audit_logs_actor_id_idx").on(table.actorId),
+        index("customer_audit_logs_created_at_idx").on(table.createdAt),
+    ]
+);
+
+/* ==========================================================================
+   Product & Category Tables
+   ========================================================================== */
 
 export const categoriesTable = pgTable("categories", {
     id: uuid().primaryKey().$default(randomUUID),
@@ -263,85 +397,32 @@ export const productSlugRedirectsTable = pgTable("product_slug_redirects", {
     index("product_slug_redirects_target_slug_idx").on(table.targetSlug),
 ]);
 
-export const customersTable = pgTable(
-    "customers",
-    {
-        id: uuid().primaryKey().$default(randomUUID),
-        authUserId: text("auth_user_id")
-            .references(() => user.id, { onDelete: "set null" })
-            .unique(),
-        customerType: customerTypeEnum("customer_type").notNull().default("registered"),
-        status: customerStatusEnum("status").notNull().default("active"),
-        email: text().notNull(),
-        firstName: text("first_name"),
-        lastName: text("last_name"),
-        phone: text("phone"),
-        avatarUrl: text("avatar_url"),
-        riskScore: integer("risk_score").notNull().default(0),
-        adminNotes: text("admin_notes"),
-        tags: jsonb("tags").$type<string[]>().notNull().default([]),
-        metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
-        totalOrders: integer("total_orders").notNull().default(0),
-        totalSpent: numeric("total_spent", { scale: 2 }).notNull().default("0.00"),
-        lastOrderAt: timestamp("last_order_at"),
-        isAnonymized: boolean("is_anonymized").notNull().default(false),
-        anonymizedAt: timestamp("anonymized_at"),
-        createdAt: timestamp("created_at").defaultNow().notNull(),
-        updatedAt: timestamp("updated_at")
-            .defaultNow()
-            .$onUpdate(() => /* @__PURE__ */ new Date())
-            .notNull(),
-        deletedAt: timestamp("deleted_at"),
-    },
-    (table) => [
-        index("customers_email_idx").on(table.email),
-        index("customers_auth_user_id_idx").on(table.authUserId),
-        index("customers_status_type_created_idx").on(table.status, table.customerType, table.createdAt),
-        index("customers_deleted_at_idx").on(table.deletedAt),
-        index("customers_email_trgm_idx").using("gin", table.email.op("gin_trgm_ops")),
-        index("customers_first_name_trgm_idx").using("gin", table.firstName.op("gin_trgm_ops")),
-        index("customers_last_name_trgm_idx").using("gin", table.lastName.op("gin_trgm_ops")),
-        index("customers_phone_trgm_idx").using("gin", table.phone.op("gin_trgm_ops")),
-    ]
-);
+/* ==========================================================================
+   Relations
+   ========================================================================== */
 
-export const customerAddressesTable = pgTable(
-    "customer_addresses",
-    {
-        id: uuid().primaryKey().$default(randomUUID),
-        customerId: uuid("customer_id")
-            .notNull()
-            .references(() => customersTable.id, { onDelete: "cascade" }),
-        recipientName: text("recipient_name").notNull(),
-        company: text("company"),
-        phone: text("phone").notNull(),
-        addressLine1: text("address_line1").notNull(),
-        addressLine2: text("address_line2"),
-        city: text("city").notNull(),
-        state: text("state"),
-        postalCode: text("postal_code").notNull(),
-        countryCode: text("country_code").notNull(),
-        addressType: addressTypeEnum("address_type").notNull().default("both"),
-        isDefaultShipping: boolean("is_default_shipping").notNull().default(false),
-        isDefaultBilling: boolean("is_default_billing").notNull().default(false),
-        createdAt: timestamp("created_at").defaultNow().notNull(),
-        updatedAt: timestamp("updated_at")
-            .defaultNow()
-            .$onUpdate(() => /* @__PURE__ */ new Date())
-            .notNull(),
-        deletedAt: timestamp("deleted_at"),
-    },
-    (table) => [
-        index("customer_addresses_customer_id_idx").on(table.customerId),
-        index("customer_addresses_deleted_at_idx").on(table.deletedAt),
-        uniqueIndex("customer_addresses_unique_default_shipping")
-            .on(table.customerId)
-            .where(sql`${table.isDefaultShipping} = true AND ${table.deletedAt} IS NULL`),
-        uniqueIndex("customer_addresses_unique_default_billing")
-            .on(table.customerId)
-            .where(sql`${table.isDefaultBilling} = true AND ${table.deletedAt} IS NULL`),
-    ]
-);
+export const customersRelations = relations(customersTable, ({ one, many }) => ({
+    user: one(user, {
+        fields: [customersTable.authUserId],
+        references: [user.id],
+    }),
+    addresses: many(customerAddressesTable),
+    auditLogs: many(customerAuditLogsTable),
+}));
+
+export const customerAddressesRelations = relations(customerAddressesTable, ({ one }) => ({
+    customer: one(customersTable, {
+        fields: [customerAddressesTable.customerId],
+        references: [customersTable.id],
+    }),
+}));
+
+export const customerAuditLogsRelations = relations(customerAuditLogsTable, ({ one }) => ({
+    customer: one(customersTable, {
+        fields: [customerAuditLogsTable.customerId],
+        references: [customersTable.id],
+    }),
+}));
 
 export const categoriesRelations = relations(categoriesTable, ({ one, many }) => ({
     parent: one(categoriesTable, {
@@ -415,20 +496,5 @@ export const productCategoriesRelations = relations(productCategoriesTable, ({ o
     category: one(categoriesTable, {
         fields: [productCategoriesTable.categoryId],
         references: [categoriesTable.id],
-    }),
-}));
-
-export const customersRelations = relations(customersTable, ({ one, many }) => ({
-    user: one(user, {
-        fields: [customersTable.authUserId],
-        references: [user.id],
-    }),
-    addresses: many(customerAddressesTable),
-}));
-
-export const customerAddressesRelations = relations(customerAddressesTable, ({ one }) => ({
-    customer: one(customersTable, {
-        fields: [customerAddressesTable.customerId],
-        references: [customersTable.id],
     }),
 }));

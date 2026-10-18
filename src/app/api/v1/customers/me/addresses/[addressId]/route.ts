@@ -24,7 +24,11 @@ export const PATCH = async (request: Request, { params }: RouteParams) => {
         const body = await request.json();
         const validated = UpdateCustomerAddressSchema.parse(body);
 
-        const updated = await customerActions.updateCustomerAddress(customer.id, addressId, validated);
+        const updated = await customerActions.updateCustomerAddress(customer.id, addressId, validated, {
+            actorId: user.id,
+            actorType: "customer",
+            headers: request.headers,
+        });
         return ok(updated);
     } catch (err) {
         return handleError(err);
@@ -42,7 +46,11 @@ export const DELETE = async (request: Request, { params }: RouteParams) => {
         }
 
         const customer = await customerActions.getOrCreateCustomer(user.id, user.email, user.name);
-        const result = await customerActions.deleteCustomerAddress(customer.id, addressId);
+        const result = await customerActions.deleteCustomerAddress(customer.id, addressId, {
+            actorId: user.id,
+            actorType: "customer",
+            headers: request.headers,
+        });
         return ok(result);
     } catch (err) {
         return handleError(err);

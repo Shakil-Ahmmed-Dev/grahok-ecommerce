@@ -1,12 +1,24 @@
 import {
     ADDRESS_TYPES,
+    CUSTOMER_AUDIT_ACTIONS,
+    CUSTOMER_AUDIT_ACTOR_TYPES,
     CUSTOMER_STATUSES,
     CUSTOMER_TYPES,
     customerAddressesTable,
+    customerAuditLogsTable,
     customersTable,
+    type TCustomerAuditAction,
+    type TCustomerAuditActorType,
 } from "@/lib/drizzle/schemas/public";
 import { createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
+
+export {
+    CUSTOMER_AUDIT_ACTIONS,
+    CUSTOMER_AUDIT_ACTOR_TYPES,
+    type TCustomerAuditAction,
+    type TCustomerAuditActorType,
+};
 
 /**
  * E.164 phone regex: optional leading '+' followed by 1 to 15 digits.
@@ -188,3 +200,57 @@ export const CustomerAdminListSchema = z.object({
     pagination: CustomerPaginationMetaSchema,
 });
 export type TCustomerAdminList = z.infer<typeof CustomerAdminListSchema>;
+
+// Audit Log Model and DTO Schemas
+export const CustomerAuditLogModelSchema = createSelectSchema(customerAuditLogsTable);
+export type TCustomerAuditLogModel = z.infer<typeof CustomerAuditLogModelSchema>;
+
+export const CustomerAuditLogDTOSchema = z.object({
+    id: z.string().uuid(),
+    customerId: z.string().uuid().nullable(),
+    actorId: z.string().nullable(),
+    actorType: z.string(),
+    action: z.string(),
+    changes: z.record(z.string(), z.unknown()),
+    ipAddress: z.string().nullable(),
+    userAgent: z.string().nullable(),
+    createdAt: z.date().or(z.string()),
+});
+export type TCustomerAuditLogDTO = z.infer<typeof CustomerAuditLogDTOSchema>;
+
+export const CustomerAuditLogListQuerySchema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    limit: z.coerce.number().int().positive().max(100).default(20),
+});
+export type TCustomerAuditLogListQuery = z.infer<typeof CustomerAuditLogListQuerySchema>;
+
+export const CustomerAuditLogListResponseSchema = z.object({
+    items: z.array(CustomerAuditLogDTOSchema),
+    pagination: CustomerPaginationMetaSchema,
+});
+export type TCustomerAuditLogListResponse = z.infer<typeof CustomerAuditLogListResponseSchema>;
+
+// Anonymize & GDPR Portability Schemas
+export const CustomerAnonymizeInputSchema = z.object({
+    password: z.string().optional(),
+    confirmationText: z.string().regex(/^DELETE MY ACCOUNT$/, "Must type 'DELETE MY ACCOUNT' to confirm"),
+});
+export type TCustomerAnonymizeInput = z.infer<typeof CustomerAnonymizeInputSchema>;
+
+export const CustomerDataExportSchema = z.object({
+    exportVersion: z.string().default("1.0"),
+    exportedAt: z.string(),
+    customer: CustomerPublicProfileSchema,
+    addresses: z.array(CustomerAddressDTOSchema),
+    auditLogs: z.array(CustomerAuditLogDTOSchema),
+});
+export type TCustomerDataExport = z.infer<typeof CustomerDataExportSchema>;
+
+export interface ClientAuditMeta {
+    actorId?: string | null;
+    actorType?: "customer" | "admin" | "system";
+    headers?: Headers;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+}
+

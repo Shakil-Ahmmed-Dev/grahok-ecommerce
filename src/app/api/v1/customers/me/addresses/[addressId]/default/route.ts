@@ -29,7 +29,11 @@ export const POST = async (request: Request, { params }: RouteParams) => {
         const body = await request.json();
         const { type } = SetDefaultPayloadSchema.parse(body);
 
-        const updated = await customerActions.setDefaultAddress(customer.id, addressId, type);
+        const updated = await customerActions.setDefaultAddress(customer.id, addressId, type, {
+            actorId: user.id,
+            actorType: "customer",
+            headers: request.headers,
+        });
         return ok(updated);
     } catch (err) {
         return handleError(err);

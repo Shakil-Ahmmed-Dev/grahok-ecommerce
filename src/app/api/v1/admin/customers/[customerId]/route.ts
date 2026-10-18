@@ -22,12 +22,16 @@ export const GET = async (request: Request, { params }: RouteParams) => {
 
 export const PATCH = async (request: Request, { params }: RouteParams) => {
     try {
-        await requireAdmin(request.headers);
+        const admin = await requireAdmin(request.headers);
         const { customerId } = await params;
         const body = await request.json();
         const validated = AdminUpdateCustomerSchema.parse(body);
 
-        const updated = await customerActions.updateCustomerAdmin(customerId, validated);
+        const updated = await customerActions.updateCustomerAdmin(customerId, validated, {
+            actorId: admin.id,
+            actorType: "admin",
+            headers: request.headers,
+        });
         return ok(updated);
     } catch (err) {
         return handleError(err);

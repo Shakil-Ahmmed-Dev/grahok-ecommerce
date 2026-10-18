@@ -24,4 +24,5 @@ export const requireAdmin = async (headers: Headers) => {
     if (user.role !== "admin") {
         throw new ForbiddenError();
     }
+    return user;
 };

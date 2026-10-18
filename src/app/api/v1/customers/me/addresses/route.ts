@@ -28,7 +28,11 @@ export const POST = async (request: Request) => {
         const body = await request.json();
         const validated = CreateCustomerAddressSchema.parse(body);
 
-        const newAddress = await customerActions.addCustomerAddress(customer.id, validated);
+        const newAddress = await customerActions.addCustomerAddress(customer.id, validated, {
+            actorId: user.id,
+            actorType: "customer",
+            headers: request.headers,
+        });
         return created(newAddress);
     } catch (err) {
         return handleError(err);
