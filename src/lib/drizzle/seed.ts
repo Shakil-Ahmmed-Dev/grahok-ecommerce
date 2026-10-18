@@ -315,9 +315,9 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "4.00",
         sellPrice: "5.50",
-        stock: "50",
+        stock: "0",
+        poolStock: "50",
         inventoryType: "shared_pool",
-        baseWeightUnit: "kg",
         options: [
             {
                 name: "Package Size",

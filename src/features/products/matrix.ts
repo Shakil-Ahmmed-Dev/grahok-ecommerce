@@ -3,10 +3,12 @@ import { slugify } from "@/lib/slug";
 export interface OptionValueInput {
     value: string;
     swatchMeta?: string | null;
+    defaultConsumptionRate?: number | null;
 }
 
 export interface OptionInput {
     name: string;
+    variantTypeId?: string | null;
     values: OptionValueInput[];
 }
 
@@ -15,6 +17,7 @@ export interface GeneratedVariantPermutation {
     title: string;
     signature: string;
     suggestedSku: string;
+    poolConsumptionRate?: number | null;
 }
 
 /**
@@ -66,24 +69,37 @@ export function generateCartesianPermutations(
                 title: "Default",
                 signature: "default",
                 suggestedSku: `${prefix}-default`.toLowerCase(),
+                poolConsumptionRate: null,
             },
         ];
     }
 
-    // Iterative Cartesian Product
-    let combinations: Array<Record<string, string>> = [{}];
+    interface PartialCombo {
+        values: Record<string, string>;
+        consumptionRate?: number | null;
+    }
+
+    let combinations: PartialCombo[] = [{ values: {}, consumptionRate: null }];
 
     for (const opt of validOptions) {
         const optionName = opt.name.trim();
-        const nextCombinations: Array<Record<string, string>> = [];
+        const nextCombinations: PartialCombo[] = [];
 
         for (const current of combinations) {
             for (const val of opt.values) {
                 const valueStr = val.value.trim();
                 if (!valueStr) continue;
+
+                const consumptionRate = val.defaultConsumptionRate != null && Number(val.defaultConsumptionRate) > 0
+                    ? Number(val.defaultConsumptionRate)
+                    : current.consumptionRate ?? null;
+
                 nextCombinations.push({
-                    ...current,
-                    [optionName]: valueStr,
+                    values: {
+                        ...current.values,
+                        [optionName]: valueStr,
+                    },
+                    consumptionRate,
                 });
             }
         }
@@ -92,10 +108,10 @@ export function generateCartesianPermutations(
     }
 
     return combinations.map((combo) => {
-        const title = Object.values(combo).join(" / ");
-        const signature = normalizeVariantSignature(combo);
+        const title = Object.values(combo.values).join(" / ");
+        const signature = normalizeVariantSignature(combo.values);
 
-        const skuParts = Object.values(combo)
+        const skuParts = Object.values(combo.values)
             .map((val) => slugify(val).replace(/^-+|-+$/g, ""))
             .filter(Boolean);
 
@@ -104,10 +120,11 @@ export function generateCartesianPermutations(
             : `${prefix}-default`;
 
         return {
-            optionValues: combo,
+            optionValues: combo.values,
             title,
             signature,
             suggestedSku: baseSku.toLowerCase(),
+            poolConsumptionRate: combo.consumptionRate ?? null,
         };
     });
 }

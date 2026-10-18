@@ -22,8 +22,10 @@ import {
     RelatedProductsQuerySchema,
     ProductQuerySchema,
     ProductsListSchema,
-    WeightUnitSchema,
     InventoryTypeSchema,
+    VariantTypeSchema,
+    CreateVariantTypeSchema,
+    UpdateVariantTypeSchema,
     CreateProductVariantSchema,
     UpdateProductVariantSchema,
     ProductVariantPublicSchema,
@@ -41,7 +43,7 @@ import {
     generateCartesianPermutations,
     resolveUniqueSku,
 } from "@/features/products/matrix";
-import { calculateVariantStock, convertWeightUnit } from "@/features/products/inventory";
+import { calculateVariantStock, resolveEffectiveInventoryType } from "@/features/products/inventory";
 import { BadRequestError, PermanentRedirectError } from "@/lib/error";
 import { handleError } from "@/lib/http";
 
@@ -125,6 +127,14 @@ async function runTests() {
     console.assert(condSql.sql.includes("WITH RECURSIVE cat_tree"), "Conditions must include recursive category subtree match");
     console.log("✔ Condition builder generates FTS predicate, status lifecycle, and recursive category matching:", condSql.sql);
 
+    // inStock filtering condition test
+    const inStockConds = buildProductConditions({ inStock: true }, "public");
+    const inStockCondsSql = dialect.sqlToQuery(sql`${inStockConds}`);
+    console.assert(inStockCondsSql.sql.includes("no_tracking"), "inStock condition includes no_tracking");
+    console.assert(inStockCondsSql.sql.includes("pool_stock"), "inStock condition includes pool_stock check for shared_pool");
+    console.assert(inStockCondsSql.sql.includes('"products"."stock" > $'), "inStock condition includes discrete stock check");
+    console.log("✔ inStock builder generates multi-inventory policy condition");
+
     const orderRelevance = buildProductOrderBy("relevance", "desc", searchQ);
     const orderSql = dialect.sqlToQuery(sql`${orderRelevance[0]}`);
     console.assert(orderSql.sql.includes('ts_rank("products"."search_vector"'), "Order by relevance must use ts_rank");
@@ -147,6 +157,7 @@ async function runTests() {
         images: [],
         sellPrice: "99.99",
         stock: "10",
+        poolStock: "0",
         status: "published" as const,
         publishedAt: new Date(),
         searchVector: "some-raw-tsvector-data",
@@ -183,6 +194,7 @@ async function runTests() {
                 purchasePrice: 50.00,
                 sellPrice: 99.99,
                 stock: 10,
+                isUnlimited: false,
                 poolConsumptionRate: null,
                 isDefault: true,
                 isActive: true,
@@ -336,34 +348,53 @@ async function runTests() {
     console.assert(limitOverflowThrew, "Related products limit > 20 should throw validation error");
     console.log("✔ RelatedProductsQuerySchema validates limits and constraints");
 
-    console.log("\n=== 11. Testing Option Matrix & Arbitrary Variant Schemas ===");
-    // Weight units validation
-    const validUnits = ["g", "kg", "mg", "ml", "l", "oz", "lb", "pcs"];
-    for (const unit of validUnits) {
-        console.assert(WeightUnitSchema.parse(unit) === unit, `WeightUnitSchema should accept ${unit}`);
-    }
+    console.log("\n=== 11. Testing Option Matrix, Variant Types & Schemas ===");
+    // Variant Type & Presets schema validation
+    const parsedVariantType = CreateVariantTypeSchema.parse({
+        name: "Size",
+        code: "size",
+        description: "Apparel standard sizes",
+        defaultInventoryType: "discrete",
+        position: 0,
+        values: [
+            { value: "S", position: 0 },
+            { value: "M", position: 1 },
+            { value: "L", position: 2 },
+        ],
+    });
+    console.assert(parsedVariantType.name === "Size" && parsedVariantType.values?.length === 3, "CreateVariantTypeSchema parses valid payload");
+    const fullVariantType = VariantTypeSchema.parse({
+        ...parsedVariantType,
+        id: "vt-001",
+        values: (parsedVariantType.values ?? []).map((v, i) => ({
+            ...v,
+            id: `vtv-00${i}`,
+            variantTypeId: "vt-001",
+        })),
+    });
+    console.assert(fullVariantType.id === "vt-001", "VariantTypeSchema parses entity model");
 
-    let invalidUnitThrew = false;
-    try {
-        WeightUnitSchema.parse("gallons");
-    } catch {
-        invalidUnitThrew = true;
-    }
-    console.assert(invalidUnitThrew, "WeightUnitSchema should reject invalid units");
-    console.log("✔ WeightUnitSchema accepted all standard weight/volume units and rejected invalid ones");
+    const updateVariantType = UpdateVariantTypeSchema.parse({
+        name: "Apparel Size",
+        defaultInventoryType: "discrete",
+    });
+    console.assert(updateVariantType.name === "Apparel Size", "UpdateVariantTypeSchema parses partial updates");
+    console.log("✔ VariantType schemas validated successfully");
 
     // Option and OptionValue schemas
     const parsedOption = CreateProductOptionSchema.parse({
         name: "Size",
         position: 0,
+        variantTypeId: "a123e456-e89b-12d3-a456-426614174000",
         values: [
             { value: "S", position: 0 },
             { value: "M", position: 1 },
         ],
     });
     console.assert(parsedOption.name === "Size" && parsedOption.values?.length === 2, "CreateProductOptionSchema parsed");
+    console.assert(parsedOption.variantTypeId === "a123e456-e89b-12d3-a456-426614174000", "CreateProductOptionSchema preserves variantTypeId");
 
-    const parsedUpdateOption = UpdateProductOptionSchema.parse({ name: "Dimensions" });
+    const parsedUpdateOption = UpdateProductOptionSchema.parse({ name: "Dimensions", variantTypeId: null });
     console.assert(parsedUpdateOption.name === "Dimensions", "UpdateProductOptionSchema parsed");
 
     const parsedValCreate = CreateOptionValueSchema.parse({ value: "Red", swatchMeta: "#FF0000" });
@@ -375,11 +406,10 @@ async function runTests() {
     const parsedOptionItem = ProductOptionItemSchema.parse({
         id: "opt-1",
         productId: "p-1",
+        variantTypeId: "a123e456-e89b-12d3-a456-426614174000",
         name: "Size",
         position: 0,
         values: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
     });
     console.assert(parsedOptionItem.id === "opt-1", "ProductOptionItemSchema parsed");
 
@@ -395,10 +425,12 @@ async function runTests() {
         ],
         defaultSellPrice: "29.99",
         defaultStock: "50",
+        defaultInventoryType: "discrete",
         preview: true,
     });
     console.assert(parsedGenerateMatrixInput.defaultSellPrice === 29.99, "GenerateMatrixInputSchema defaultSellPrice coerced");
     console.assert(parsedGenerateMatrixInput.defaultStock === 50, "GenerateMatrixInputSchema defaultStock coerced");
+    console.assert(parsedGenerateMatrixInput.defaultInventoryType === "discrete", "GenerateMatrixInputSchema defaultInventoryType parsed");
     console.assert(parsedGenerateMatrixInput.preview === true, "GenerateMatrixInputSchema preview parsed");
 
     // Matrix Engine Permutations & Signatures
@@ -412,24 +444,25 @@ async function runTests() {
         {
             name: "Color",
             values: [
-                { id: "c1", value: "Red" },
-                { id: "c2", value: "Blue" },
+                { value: "Red" },
+                { value: "Blue" },
             ],
         },
         {
-            name: "Size",
+            name: "Package Size",
             values: [
-                { id: "s1", value: "S" },
-                { id: "s2", value: "M" },
+                { value: "500g", defaultConsumptionRate: 0.5 },
+                { value: "1kg", defaultConsumptionRate: 1.0 },
             ],
         },
     ];
-    const permutations = generateCartesianPermutations("organic-t-shirt", testOptionsForMatrix, "TSHIRT");
+    const permutations = generateCartesianPermutations("organic-rice", testOptionsForMatrix, "RICE");
     console.assert(permutations.length === 4, "2x2 options produce 4 permutations");
-    console.assert(permutations[0].title === "Red / S", "First permutation title is Red / S");
-    console.assert(permutations[0].signature === "color=red&size=s", "Permutation signature generated");
-    console.assert(permutations[0].suggestedSku === "tshirt-red-s", "Permutation suggestedSku formatted with prefix");
-    console.log("✔ Cartesian permutation and signature normalization engine passed");
+    console.assert(permutations[0].title === "Red / 500g", "First permutation title is Red / 500g");
+    console.assert(permutations[0].signature === "color=red&package size=500g", "Permutation signature generated");
+    console.assert(permutations[0].suggestedSku === "rice-red-500g", "Permutation suggestedSku formatted with prefix");
+    console.assert(permutations[0].poolConsumptionRate === 0.5, "Permutation inherited defaultConsumptionRate from option value");
+    console.log("✔ Cartesian permutation, consumption rate propagation, and signature engine passed");
 
     // CreateProductVariantSchema parsing and coercion
     const parsedVariantInput = CreateProductVariantSchema.parse({
@@ -438,12 +471,14 @@ async function runTests() {
         purchasePrice: "6.50",
         sellPrice: "14.99",
         stock: "120",
+        inventoryType: "no_tracking",
     });
     console.assert(parsedVariantInput.title === "Large / Black", "title parsed");
     console.assert(parsedVariantInput.optionValues.Size === "Large", "optionValues parsed");
     console.assert(parsedVariantInput.purchasePrice === 6.5, "purchasePrice coerced to number");
     console.assert(parsedVariantInput.sellPrice === 14.99, "sellPrice coerced to number");
     console.assert(parsedVariantInput.stock === 120, "stock coerced to number");
+    console.assert(parsedVariantInput.inventoryType === "no_tracking", "inventoryType accepted nullable/optional override");
     console.assert(parsedVariantInput.isDefault === false, "isDefault defaults to false");
     console.assert(parsedVariantInput.isActive === true, "isActive defaults to true");
 
@@ -464,10 +499,14 @@ async function runTests() {
     const updateVariantInput = UpdateProductVariantSchema.parse({
         sellPrice: "19.99",
         isDefault: true,
+        inventoryType: "shared_pool",
+        poolConsumptionRate: "0.75",
         optionValues: { Size: "XL" },
     });
     console.assert(updateVariantInput.sellPrice === 19.99, "Update schema accepts partial payload and coerces sellPrice");
     console.assert(updateVariantInput.isDefault === true, "Update schema accepts partial isDefault flag");
+    console.assert(updateVariantInput.inventoryType === "shared_pool", "Update schema accepts inventoryType");
+    console.assert(updateVariantInput.poolConsumptionRate === 0.75, "Update schema coerces poolConsumptionRate");
     console.assert(updateVariantInput.optionValues?.Size === "XL", "Update schema accepts optionValues");
     console.log("✔ UpdateProductVariantSchema validated partial updates");
 
@@ -485,14 +524,15 @@ async function runTests() {
         publishedAt: new Date(),
         sellPrice: "12.99",
         stock: "100",
+        poolStock: "0",
         inventoryType: "discrete" as const,
-        baseWeightUnit: null,
         searchVector: "raw-tsvector",
         categories: [],
         options: [
             {
                 id: "opt-1",
                 productId: "a123e456-e89b-12d3-a456-426614174000",
+                variantTypeId: null,
                 name: "Capacity",
                 position: 0,
                 createdAt: new Date(),
@@ -513,6 +553,7 @@ async function runTests() {
                 sku: "bottle-500ml",
                 sellPrice: 12.99,
                 stock: 50,
+                isUnlimited: false,
                 inventoryType: "discrete" as const,
                 poolConsumptionRate: null,
                 isDefault: true,
@@ -528,6 +569,7 @@ async function runTests() {
                 sku: "bottle-1000ml",
                 sellPrice: 16.99,
                 stock: 50,
+                isUnlimited: false,
                 inventoryType: "discrete" as const,
                 poolConsumptionRate: null,
                 isDefault: false,
@@ -573,10 +615,11 @@ async function runTests() {
 
     console.log("✔ Product schema variant projection (public vs admin) passed");
 
-    console.log("\n=== 12. Testing Shared Inventory Pool & Unit Conversions ===");
+    console.log("\n=== 12. Testing Multi-Inventory Policy & Shared Inventory Pool ===");
     // 1. InventoryTypeSchema validation
     console.assert(InventoryTypeSchema.parse("discrete") === "discrete", "InventoryTypeSchema accepts 'discrete'");
     console.assert(InventoryTypeSchema.parse("shared_pool") === "shared_pool", "InventoryTypeSchema accepts 'shared_pool'");
+    console.assert(InventoryTypeSchema.parse("no_tracking") === "no_tracking", "InventoryTypeSchema accepts 'no_tracking'");
     let invalidInvThrew = false;
     try {
         InventoryTypeSchema.parse("infinite");
@@ -584,115 +627,74 @@ async function runTests() {
         invalidInvThrew = true;
     }
     console.assert(invalidInvThrew, "InventoryTypeSchema rejects invalid inventory types");
-    console.log("✔ InventoryTypeSchema validated discrete and shared_pool types");
+    console.log("✔ InventoryTypeSchema validated discrete, shared_pool, and no_tracking types");
 
-    // 2. Unit conversion tests
-    console.assert(convertWeightUnit(500, "g", "kg") === 0.5, "500g is 0.5 kg");
-    console.assert(convertWeightUnit(2.5, "kg", "g") === 2500, "2.5kg is 2500 g");
-    console.assert(convertWeightUnit(1000, "mg", "g") === 1, "1000mg is 1 g");
-    console.assert(convertWeightUnit(750, "ml", "l") === 0.75, "750ml is 0.75 l");
-    console.assert(convertWeightUnit(3, "l", "ml") === 3000, "3l is 3000 ml");
-    console.assert(convertWeightUnit(12, "pcs", "pcs") === 12, "12 pcs is 12 pcs");
-    console.assert(convertWeightUnit(500, "g", "ml") === null, "Incompatible dimensions return null");
-    console.log("✔ Unit conversion matrix validated across mass, volume, and count");
+    // 2. resolveEffectiveInventoryType resolution
+    console.assert(resolveEffectiveInventoryType("no_tracking", "discrete") === "no_tracking", "Variant inventoryType takes precedence");
+    console.assert(resolveEffectiveInventoryType(null, "shared_pool") === "shared_pool", "Variant inherits product policy when null");
+    console.assert(resolveEffectiveInventoryType(undefined, "discrete") === "discrete", "Variant inherits product policy when undefined");
+    console.assert(resolveEffectiveInventoryType(null, null) === "discrete", "Defaults to discrete if both are null");
+    console.log("✔ resolveEffectiveInventoryType hierarchy validated");
 
-    // 3. Shared pool stock calculation (User's exact Rice scenario: 50 KG sack with 500g and 1kg variants)
-    const stock500gAt50Kg = calculateVariantStock({
-        masterStock: 50,
-        inventoryType: "shared_pool",
+    // 3. calculateVariantStock tests
+    // A. no_tracking inventory policy
+    const noTrackingStock = calculateVariantStock({
+        masterPoolStock: 50,
+        inventoryType: "no_tracking",
         variantStock: 0,
-        weightValue: 500,
-        weightUnit: "g",
-        baseWeightUnit: "kg",
     });
-    console.assert(stock500gAt50Kg === 100, "50 KG of rice produces 100 packs of 500g (floor(50 / 0.5))");
+    console.assert(noTrackingStock.stock === null, "no_tracking stock is null");
+    console.assert(noTrackingStock.isUnlimited === true, "no_tracking isUnlimited is true");
+    console.assert(noTrackingStock.inventoryType === "no_tracking", "no_tracking inventoryType preserved");
 
-    const stock1kgAt50Kg = calculateVariantStock({
-        masterStock: 50,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 1,
-        weightUnit: "kg",
-        baseWeightUnit: "kg",
-    });
-    console.assert(stock1kgAt50Kg === 50, "50 KG of rice produces 50 packs of 1kg (floor(50 / 1.0))");
-
-    const stock5kgAt50Kg = calculateVariantStock({
-        masterStock: 50,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 5,
-        weightUnit: "kg",
-        baseWeightUnit: "kg",
-    });
-    console.assert(stock5kgAt50Kg === 10, "50 KG of rice produces 10 packs of 5kg (floor(50 / 5.0))");
-
-    // After 2 kg sold (48 kg left in pool)
-    const stock500gAt48Kg = calculateVariantStock({
-        masterStock: 48,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 500,
-        weightUnit: "g",
-        baseWeightUnit: "kg",
-    });
-    console.assert(stock500gAt48Kg === 96, "48 KG of rice produces 96 packs of 500g (floor(48 / 0.5))");
-
-    const stock1kgAt48Kg = calculateVariantStock({
-        masterStock: 48,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 1,
-        weightUnit: "kg",
-        baseWeightUnit: "kg",
-    });
-    console.assert(stock1kgAt48Kg === 48, "48 KG of rice produces 48 packs of 1kg (floor(48 / 1.0))");
-
-    // Pool empty (0 kg)
-    const stockAt0Kg = calculateVariantStock({
-        masterStock: 0,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 500,
-        weightUnit: "g",
-        baseWeightUnit: "kg",
-    });
-    console.assert(stockAt0Kg === 0, "0 KG master stock produces 0 available packs");
-
-    // 4. Liquid volume shared pool: 20 Liters of oil with 250ml variant
-    const stock250mlOil = calculateVariantStock({
-        masterStock: 20,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 250,
-        weightUnit: "ml",
-        baseWeightUnit: "l",
-    });
-    console.assert(stock250mlOil === 80, "20 L of oil produces 80 bottles of 250ml (floor(20 / 0.25))");
-
-    // 5. Explicit poolConsumptionRate override (e.g. 0.525 kg per pack to account for packaging tare/spillage)
-    const stockWithWaste = calculateVariantStock({
-        masterStock: 50,
-        inventoryType: "shared_pool",
-        variantStock: 0,
-        weightValue: 500,
-        weightUnit: "g",
-        baseWeightUnit: "kg",
-        poolConsumptionRate: 0.525,
-    });
-    console.assert(stockWithWaste === 95, "Explicit poolConsumptionRate 0.525 produces 95 packs (floor(50 / 0.525))");
-
-    // 6. Discrete inventory returns variant's own stock directly
-    const stockDiscrete = calculateVariantStock({
-        masterStock: 500,
+    // B. discrete inventory policy
+    const discreteStock = calculateVariantStock({
+        masterPoolStock: 500,
         inventoryType: "discrete",
         variantStock: 25,
-        weightValue: 500,
-        weightUnit: "g",
-        baseWeightUnit: "kg",
     });
-    console.assert(stockDiscrete === 25, "Discrete inventory retains standalone variant stock");
-    console.log("✔ calculateVariantStock correctly evaluated shared pool, dynamic pack counts, overrides, and discrete fallbacks");
+    console.assert(discreteStock.stock === 25, "discrete stock returns variant stock");
+    console.assert(discreteStock.isUnlimited === false, "discrete isUnlimited is false");
+
+    // C. shared_pool with 50 KG pool
+    const pool500g = calculateVariantStock({
+        masterPoolStock: 50,
+        inventoryType: "shared_pool",
+        poolConsumptionRate: 0.5,
+    });
+    console.assert(pool500g.stock === 100, "50 KG of rice produces 100 packs of 500g (floor(50 / 0.5))");
+    console.assert(pool500g.isUnlimited === false, "shared_pool isUnlimited is false");
+
+    const pool1kg = calculateVariantStock({
+        masterPoolStock: 50,
+        inventoryType: "shared_pool",
+        poolConsumptionRate: 1,
+    });
+    console.assert(pool1kg.stock === 50, "50 KG produces 50 packs of 1kg");
+
+    const pool5kg = calculateVariantStock({
+        masterPoolStock: 50,
+        inventoryType: "shared_pool",
+        poolConsumptionRate: 5,
+    });
+    console.assert(pool5kg.stock === 10, "50 KG produces 10 packs of 5kg");
+
+    // After 2 kg sold (48 kg left in pool)
+    const pool500gAt48 = calculateVariantStock({
+        masterPoolStock: 48,
+        inventoryType: "shared_pool",
+        poolConsumptionRate: 0.5,
+    });
+    console.assert(pool500gAt48.stock === 96, "48 KG produces 96 packs of 500g");
+
+    // Empty pool (0 KG)
+    const poolAt0 = calculateVariantStock({
+        masterPoolStock: 0,
+        inventoryType: "shared_pool",
+        poolConsumptionRate: 0.5,
+    });
+    console.assert(poolAt0.stock === 0, "0 pool produces 0 stock");
+    console.log("✔ calculateVariantStock correctly evaluated no_tracking, discrete, and shared_pool policies");
 
     console.log("\n=== 13. Testing Slug 301/308 Redirect Engine & Reservation Logic ===");
 
@@ -723,7 +725,6 @@ async function runTests() {
     console.assert(parsedRedirect.success, "Valid redirect record should parse successfully");
 
     // 4. Draft vs Published Redirect Rule simulation
-    // - Draft product renaming: wasEverPublished is false -> redirects should NOT be created
     const draftProduct = {
         id: "prod-1",
         slug: "draft-rice",
@@ -733,7 +734,6 @@ async function runTests() {
     const wasEverPublishedDraft = draftProduct.publishedAt !== null || draftProduct.status === "published";
     console.assert(!wasEverPublishedDraft, "Draft product with null publishedAt should NOT qualify for slug redirection");
 
-    // - Published product renaming: wasEverPublished is true -> redirects MUST be created
     const publishedProduct = {
         id: "prod-2",
         slug: "published-rice",
@@ -743,7 +743,6 @@ async function runTests() {
     const wasEverPublishedLive = publishedProduct.publishedAt !== null || publishedProduct.status === "published";
     console.assert(wasEverPublishedLive, "Published product must qualify for slug redirection");
 
-    // - Product previously published but now archived/draft: wasEverPublished is true
     const archivedProduct = {
         id: "prod-3",
         slug: "archived-rice",
@@ -754,20 +753,15 @@ async function runTests() {
     console.assert(wasEverPublishedArchived, "Previously published product with publishedAt != null must qualify for slug redirection");
 
     // 5. 1-Hop Chain Flattening Simulation
-    // Existing chain: A -> B. Now B is renamed to C.
-    // Flattening logic: all existing redirects pointing to targetSlug === 'B' must be updated to targetSlug === 'C',
-    // plus a new redirect for B -> C.
     const existingRedirects = [
         { id: "r1", productId: "prod-2", sourceSlug: "slug-a", targetSlug: "slug-b" },
     ];
     const newCanonicalSlug = "slug-c";
     const currentSlug = "slug-b";
 
-    // Flatten existing:
     const flattened = existingRedirects.map((r) =>
         r.targetSlug === currentSlug ? { ...r, targetSlug: newCanonicalSlug } : r
     );
-    // Add new redirect for currentSlug -> newCanonicalSlug:
     flattened.push({
         id: "r2",
         productId: "prod-2",
@@ -781,13 +775,10 @@ async function runTests() {
     console.assert(flattened.find((r) => r.sourceSlug === "slug-b")?.targetSlug === "slug-c", "slug-b -> slug-c recorded");
 
     // 6. Slug Reversion Simulation
-    // Suppose product renames from C back to A:
-    // Any redirect where sourceSlug === 'slug-a' must be removed to avoid cycles (A -> A),
-    // and remaining redirects (e.g. B) point to A.
     const revertTarget = "slug-a";
     const postReversion = flattened
-        .filter((r) => r.sourceSlug !== revertTarget) // prune sourceSlug === 'slug-a'
-        .map((r) => ({ ...r, targetSlug: revertTarget })); // point rest (B) to 'slug-a'
+        .filter((r) => r.sourceSlug !== revertTarget)
+        .map((r) => ({ ...r, targetSlug: revertTarget }));
 
     console.assert(postReversion.length === 1, "Reversion pruned the old redirect record to avoid cycles");
     console.assert(postReversion[0].sourceSlug === "slug-b" && postReversion[0].targetSlug === "slug-a", "slug-b now redirects directly to reverted slug-a");
@@ -804,6 +795,7 @@ async function runTests() {
         sellPrice: 99.99,
         purchasePrice: 55.00,
         stock: 120,
+        poolStock: 0,
         inventoryType: "discrete" as const,
         featuredImageUrl: "https://example.com/headphones.jpg",
     };
@@ -819,6 +811,7 @@ async function runTests() {
         purchasePrice: mockSimpleProduct.purchasePrice,
         sellPrice: mockSimpleProduct.sellPrice,
         stock: mockSimpleProduct.stock,
+        isUnlimited: false,
         poolConsumptionRate: null,
         isDefault: true,
         isActive: true,
@@ -867,7 +860,6 @@ async function runTests() {
     console.assert(deleteBlockedError instanceof BadRequestError, "Attempting to delete the only variant throws BadRequestError");
     console.assert(deleteBlockedError?.message.includes("Cannot delete the only variant"), "Error message explains constraint");
 
-    // Allowed when > 1 variant
     let deleteAllowedThrew = false;
     try {
         checkCanDeleteVariant(3);
@@ -900,8 +892,8 @@ async function runTests() {
     const mockVariants = [
         { id: "v1", sellPrice: 25.00, stock: 10, isActive: true, deletedAt: null },
         { id: "v2", sellPrice: 15.00, stock: 20, isActive: true, deletedAt: null },
-        { id: "v3", sellPrice: 35.00, stock: 5, isActive: false, deletedAt: null }, // inactive -> excluded
-        { id: "v4", sellPrice: 10.00, stock: 50, isActive: true, deletedAt: new Date() }, // soft-deleted -> excluded
+        { id: "v3", sellPrice: 35.00, stock: 5, isActive: false, deletedAt: null },
+        { id: "v4", sellPrice: 10.00, stock: 50, isActive: true, deletedAt: new Date() },
     ];
 
     const activeNonDeleted = mockVariants.filter((v) => v.isActive && !v.deletedAt);
@@ -922,8 +914,7 @@ async function runTests() {
     console.assert(deletedVariant.deletedAt !== null, "Soft-deleted variant preserves deletedAt timestamp");
     console.log("✔ Variant soft delete schema projection passed");
 
-    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, Shared Pool Inventory, Slug 301 Redirect Engine, Canonical Purchasable Entity Contract, and Option B Read-Model tests PASSED successfully! 🚀");
+    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, Multi-Inventory Policies, Shared Pool Inventory, Slug 301 Redirect Engine, Canonical Purchasable Entity Contract, and Option B Read-Model tests PASSED successfully! 🚀");
 }
 
 void runTests();
-

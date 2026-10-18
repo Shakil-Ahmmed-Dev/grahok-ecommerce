@@ -3,6 +3,7 @@ import {
     CreateOptionValueSchema,
     CreateProductOptionSchema,
     CreateProductVariantSchema,
+    CreateVariantTypeSchema,
     GenerateMatrixInputSchema,
     GetProductPublicSchema,
     GetProductSchema,
@@ -15,30 +16,36 @@ import {
     UpdateOptionValueSchema,
     UpdateProductOptionSchema,
     UpdateProductVariantSchema,
+    UpdateVariantTypeSchema,
+    VariantTypeSchema,
     type TAdminProductQuery,
     type TAdminProductsList,
-    type TPaginationMeta,
-    type TProductQuery,
-    type TProductsList,
+    type TCreateOptionValueInput,
+    type TCreateProductOptionInput,
     type TCreateProductOutput,
     type TCreateProductVariantInput,
+    type TCreateVariantTypeInput,
+    type TGenerateMatrixInput,
     type TGetProduct,
     type TGetProductPublic,
     type TGetProductsPublic,
+    type TInventoryType,
+    type TOptionValueItem,
+    type TPaginationMeta,
     type TProductModel,
+    type TProductOptionItem,
+    type TProductQuery,
+    type TProductsList,
     type TProductSlug,
+    type TProductSuggestions,
     type TProductVariant,
+    type TSuggestQuery,
+    type TUpdateOptionValueInput,
+    type TUpdateProductOptionInput,
     type TUpdateProductOutput,
     type TUpdateProductVariantInput,
-    type TSuggestQuery,
-    type TProductSuggestions,
-    type TCreateProductOptionInput,
-    type TUpdateProductOptionInput,
-    type TCreateOptionValueInput,
-    type TUpdateOptionValueInput,
-    type TGenerateMatrixInput,
-    type TProductOptionItem,
-    type TOptionValueItem,
+    type TUpdateVariantTypeInput,
+    type TVariantType,
 } from "./types";
 import { BadRequestError, ConflictError, NotFoundError, PermanentRedirectError } from "@/lib/error";
 import { db } from "@/lib/drizzle";
@@ -50,6 +57,8 @@ import {
     productsTable,
     productSlugRedirectsTable,
     productVariantsTable,
+    variantTypesTable,
+    variantTypeValuesTable,
 } from "@/lib/drizzle/schemas/public";
 import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
@@ -65,8 +74,9 @@ import {
     resolveProductSort,
 } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
-import { calculateVariantStock } from "./inventory";
+import { calculateVariantStock, resolveEffectiveInventoryType } from "./inventory";
 import { generateCartesianPermutations, normalizeVariantSignature } from "./matrix";
+import z from "zod";
 
 const buildPaginationMeta = (
     total: number | undefined,
@@ -91,12 +101,13 @@ const buildPaginationMeta = (
 
 function mapProductCategories<T extends {
     stock?: string | number;
+    poolStock?: string | number;
     inventoryType?: string;
-    baseWeightUnit?: string | null;
     productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }>;
     options?: Array<{
         id: string;
         productId?: string;
+        variantTypeId?: string | null;
         name: string;
         position: number;
         values?: Array<{
@@ -117,7 +128,7 @@ function mapProductCategories<T extends {
         inventoryType?: string | null;
         purchasePrice?: string | number;
         sellPrice: string | number;
-        stock: string | number;
+        stock?: string | number | null;
         poolConsumptionRate?: string | number | null;
         isDefault: boolean;
         isActive: boolean;
@@ -127,11 +138,13 @@ function mapProductCategories<T extends {
     }>;
 }>(product: T) {
     const { productCategories, options, variants, ...rest } = product;
-    const invType = (product.inventoryType ?? "discrete") as "discrete" | "shared_pool";
-    const masterStock = Number(product.stock ?? 0);
+    const prodInvType = (product.inventoryType ?? "discrete") as TInventoryType;
+    const masterPoolStock = Number(product.poolStock ?? 0);
 
     return {
         ...rest,
+        stock: Number(product.stock ?? 0),
+        poolStock: Number(product.poolStock ?? 0),
         categories: (productCategories ?? []).map((pc) => ({
             id: pc.category.id,
             name: pc.category.name,
@@ -141,6 +154,7 @@ function mapProductCategories<T extends {
         options: (options ?? []).map((opt) => ({
             id: opt.id,
             productId: opt.productId,
+            variantTypeId: opt.variantTypeId ?? null,
             name: opt.name,
             position: Number(opt.position ?? 0),
             values: (opt.values ?? []).map((v) => ({
@@ -152,11 +166,14 @@ function mapProductCategories<T extends {
             })),
         })),
         variants: (variants ?? []).map((v) => {
-            const rawStock = Number(v.stock);
-            const variantInvType = (v.inventoryType ?? invType) as "discrete" | "shared_pool";
-            const computedStock = calculateVariantStock({
-                masterStock,
-                inventoryType: variantInvType,
+            const rawStock = v.stock != null ? Number(v.stock) : 0;
+            const effectiveInvType = resolveEffectiveInventoryType(
+                v.inventoryType as TInventoryType | null | undefined,
+                prodInvType
+            );
+            const stockResult = calculateVariantStock({
+                masterPoolStock,
+                inventoryType: effectiveInvType,
                 variantStock: rawStock,
                 poolConsumptionRate: v.poolConsumptionRate != null ? Number(v.poolConsumptionRate) : null,
             });
@@ -165,9 +182,10 @@ function mapProductCategories<T extends {
                 ...v,
                 optionValues: (v.optionValues && typeof v.optionValues === "object") ? v.optionValues : {},
                 signature: v.signature || normalizeVariantSignature(v.optionValues),
-                inventoryType: variantInvType,
+                inventoryType: effectiveInvType,
                 sellPrice: Number(v.sellPrice),
-                stock: computedStock,
+                stock: stockResult.stock,
+                isUnlimited: stockResult.isUnlimited,
                 ...(v.poolConsumptionRate != null ? { poolConsumptionRate: Number(v.poolConsumptionRate) } : {}),
                 ...(v.purchasePrice !== undefined ? { purchasePrice: Number(v.purchasePrice) } : {}),
             };
@@ -181,7 +199,7 @@ export const syncProductAggregateReadModel = async (
 ): Promise<void> => {
     const product = await executor.query.productsTable.findFirst({
         where: (p, { eq }) => eq(p.id, productId),
-        columns: { id: true, inventoryType: true, stock: true },
+        columns: { id: true, inventoryType: true, stock: true, poolStock: true },
     });
     if (!product) return;
 
@@ -191,7 +209,7 @@ export const syncProductAggregateReadModel = async (
             eq(v.isActive, true),
             isNull(v.deletedAt)
         ),
-        columns: { sellPrice: true, stock: true, isDefault: true },
+        columns: { sellPrice: true, stock: true, isDefault: true, inventoryType: true, poolConsumptionRate: true },
     });
 
     if (activeVariants.length === 0) return;
@@ -203,7 +221,13 @@ export const syncProductAggregateReadModel = async (
     };
 
     if (product.inventoryType === "discrete") {
-        const totalDiscreteStock = activeVariants.reduce((sum, v) => sum + Number(v.stock), 0);
+        const totalDiscreteStock = activeVariants.reduce((sum, v) => {
+            const effectiveType = resolveEffectiveInventoryType(v.inventoryType, product.inventoryType);
+            if (effectiveType === "discrete") {
+                return sum + Number(v.stock);
+            }
+            return sum;
+        }, 0);
         updateFields.stock = totalDiscreteStock;
     }
 
@@ -213,7 +237,174 @@ export const syncProductAggregateReadModel = async (
         .where(eq(productsTable.id, productId));
 };
 
-const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
+export const createVariantType = async (input: TCreateVariantTypeInput): Promise<TVariantType> => {
+    const parsed = CreateVariantTypeSchema.parse(input);
+
+    const existing = await db.query.variantTypesTable.findFirst({
+        where: (vt, { eq }) => eq(vt.code, parsed.code),
+        columns: { id: true },
+    });
+    if (existing) {
+        throw new ConflictError(`Variant type with code '${parsed.code}' already exists`);
+    }
+
+    const { values, ...typeData } = parsed;
+
+    return await db.transaction(async (tx) => {
+        const [insertedType] = await tx.insert(variantTypesTable).values({
+            ...typeData,
+        }).returning();
+
+        let insertedValues: Array<{
+            id: string;
+            variantTypeId: string;
+            value: string;
+            position: number;
+            swatchMeta: string | null;
+            defaultConsumptionRate: number | null;
+            createdAt: Date;
+            updatedAt: Date;
+        }> = [];
+
+        if (values && values.length > 0) {
+            insertedValues = await tx.insert(variantTypeValuesTable).values(
+                values.map((v, idx) => ({
+                    variantTypeId: insertedType.id,
+                    value: v.value,
+                    position: v.position ?? idx,
+                    swatchMeta: v.swatchMeta ?? null,
+                    defaultConsumptionRate: v.defaultConsumptionRate != null ? Number(v.defaultConsumptionRate) : null,
+                }))
+            ).returning();
+        }
+
+        return VariantTypeSchema.parse({
+            ...insertedType,
+            values: insertedValues,
+        });
+    });
+};
+
+export const getVariantTypes = async (): Promise<TVariantType[]> => {
+    const types = await db.query.variantTypesTable.findMany({
+        orderBy: (vt, { asc }) => [asc(vt.position), asc(vt.createdAt)],
+        with: {
+            values: {
+                orderBy: (v, { asc }) => [asc(v.position), asc(v.createdAt)],
+            },
+        },
+    });
+
+    return z.array(VariantTypeSchema).parse(types);
+};
+
+export const getVariantTypeById = async (id: string): Promise<TVariantType> => {
+    const variantType = await db.query.variantTypesTable.findFirst({
+        where: (vt, { eq }) => eq(vt.id, id),
+        with: {
+            values: {
+                orderBy: (v, { asc }) => [asc(v.position), asc(v.createdAt)],
+            },
+        },
+    });
+
+    if (!variantType) {
+        throw new NotFoundError("Variant type not found");
+    }
+
+    return VariantTypeSchema.parse(variantType);
+};
+
+export const updateVariantType = async (id: string, input: TUpdateVariantTypeInput): Promise<TVariantType> => {
+    const parsed = UpdateVariantTypeSchema.parse(input);
+
+    const existing = await db.query.variantTypesTable.findFirst({
+        where: (vt, { eq }) => eq(vt.id, id),
+    });
+    if (!existing) {
+        throw new NotFoundError("Variant type not found");
+    }
+
+    if (parsed.code && parsed.code !== existing.code) {
+        const codeTaken = await db.query.variantTypesTable.findFirst({
+            where: (vt, { eq, and, ne }) => and(eq(vt.code, parsed.code!), ne(vt.id, id)),
+            columns: { id: true },
+        });
+        if (codeTaken) {
+            throw new ConflictError(`Variant type with code '${parsed.code}' already exists`);
+        }
+    }
+
+    const { values, ...typeData } = parsed;
+
+    return await db.transaction(async (tx) => {
+        if (Object.keys(typeData).length > 0) {
+            await tx.update(variantTypesTable)
+                .set(typeData)
+                .where(eq(variantTypesTable.id, id));
+        }
+
+        if (values !== undefined) {
+            const incomingIds = values.map((v) => v.id).filter(Boolean) as string[];
+            if (incomingIds.length > 0) {
+                await tx.delete(variantTypeValuesTable).where(
+                    and(
+                        eq(variantTypeValuesTable.variantTypeId, id),
+                        sql`${variantTypeValuesTable.id} NOT IN (${sql.join(incomingIds.map((idVal) => sql`${idVal}`), sql`, `)})`
+                    )
+                );
+            } else {
+                await tx.delete(variantTypeValuesTable).where(eq(variantTypeValuesTable.variantTypeId, id));
+            }
+
+            for (let idx = 0; idx < values.length; idx++) {
+                const val = values[idx];
+                if (val.id) {
+                    await tx.update(variantTypeValuesTable).set({
+                        value: val.value,
+                        position: val.position ?? idx,
+                        swatchMeta: val.swatchMeta ?? null,
+                        defaultConsumptionRate: val.defaultConsumptionRate != null ? Number(val.defaultConsumptionRate) : null,
+                    }).where(and(eq(variantTypeValuesTable.id, val.id), eq(variantTypeValuesTable.variantTypeId, id)));
+                } else if (val.value) {
+                    await tx.insert(variantTypeValuesTable).values({
+                        variantTypeId: id,
+                        value: val.value,
+                        position: val.position ?? idx,
+                        swatchMeta: val.swatchMeta ?? null,
+                        defaultConsumptionRate: val.defaultConsumptionRate != null ? Number(val.defaultConsumptionRate) : null,
+                    });
+                }
+            }
+        }
+
+        const updated = await tx.query.variantTypesTable.findFirst({
+            where: (vt, { eq }) => eq(vt.id, id),
+            with: {
+                values: {
+                    orderBy: (v, { asc }) => [asc(v.position), asc(v.createdAt)],
+                },
+            },
+        });
+
+        return VariantTypeSchema.parse(updated);
+    });
+};
+
+export const deleteVariantType = async (id: string): Promise<{ success: boolean }> => {
+    const existing = await db.query.variantTypesTable.findFirst({
+        where: (vt, { eq }) => eq(vt.id, id),
+        columns: { id: true },
+    });
+    if (!existing) {
+        throw new NotFoundError("Variant type not found");
+    }
+
+    await db.delete(variantTypesTable).where(eq(variantTypesTable.id, id));
+    return { success: true };
+};
+
+export const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     const searchQuery = buildProductSearchQuery(query.search);
     const effectiveSort = resolveProductSort(query);
     const orderBy = buildProductOrderBy(effectiveSort, query.sortOrder, searchQuery);
@@ -243,7 +434,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
             offset,
             limit,
             columns: {
-                                updatedAt: false,
+                updatedAt: false,
                 deletedAt: false,
                 searchVector: false,
             },
@@ -275,7 +466,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
                     offset,
                     limit,
                     columns: {
-                                                updatedAt: false,
+                        updatedAt: false,
                         deletedAt: false,
                         searchVector: false,
                     },
@@ -326,7 +517,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     });
 };
 
-const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> => {
+export const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> => {
     const product = await db.query.productsTable.findFirst({
         where: (product, { eq, and, or, lte, isNull }) => {
             return and(
@@ -342,7 +533,7 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
             );
         },
         columns: {
-                        createdAt: false,
+            createdAt: false,
             updatedAt: false,
             deletedAt: false,
             searchVector: false,
@@ -386,77 +577,7 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
     return GetProductPublicSchema.parse(mapProductCategories(product));
 };
 
-const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> => {
-    let targetSlug = slug;
-    let product = await db.query.productsTable.findFirst({
-        where: (product, { eq }) => {
-            return eq(product.slug, targetSlug);
-        },
-        columns: {
-            searchVector: false,
-        },
-        with: {
-            productCategories: {
-                with: {
-                    category: true,
-                },
-            },
-            options: {
-                orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
-                with: {
-                    values: {
-                        orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
-                    },
-                },
-            },
-            variants: {
-                orderBy: (variant, { asc }) => [asc(variant.createdAt)],
-            },
-        },
-    });
-
-    if (!product) {
-        const redirect = await db.query.productSlugRedirectsTable.findFirst({
-            where: (r, { eq }) => eq(r.sourceSlug, slug),
-        });
-
-        if (redirect) {
-            targetSlug = redirect.targetSlug;
-            product = await db.query.productsTable.findFirst({
-                where: (p, { eq }) => eq(p.slug, targetSlug),
-                columns: {
-                    searchVector: false,
-                },
-                with: {
-                    productCategories: {
-                        with: {
-                            category: true,
-                        },
-                    },
-                    options: {
-                        orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
-                        with: {
-                            values: {
-                                orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
-                            },
-                        },
-                    },
-                    variants: {
-                        orderBy: (variant, { asc }) => [asc(variant.createdAt)],
-                    },
-                },
-            });
-        }
-    }
-
-    if (!product) {
-        throw new NotFoundError("Product not found");
-    }
-
-    return GetProductSchema.parse(mapProductCategories(product));
-};
-
-const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProductsList> => {
+export const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProductsList> => {
     const searchQuery = buildProductSearchQuery(query.search);
     const effectiveSort = resolveProductSort(query);
     const orderBy = buildProductOrderBy(effectiveSort, query.sortOrder, searchQuery);
@@ -565,7 +686,77 @@ const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdminProduc
     });
 };
 
-const createProduct = async (data: TCreateProductOutput): Promise<TProductModel> => {
+export const getAdminProductBySlug = async (slug: TProductSlug): Promise<TGetProduct> => {
+    let targetSlug = slug;
+    let product = await db.query.productsTable.findFirst({
+        where: (product, { eq }) => {
+            return eq(product.slug, targetSlug);
+        },
+        columns: {
+            searchVector: false,
+        },
+        with: {
+            productCategories: {
+                with: {
+                    category: true,
+                },
+            },
+            options: {
+                orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
+                with: {
+                    values: {
+                        orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
+                    },
+                },
+            },
+            variants: {
+                orderBy: (variant, { asc }) => [asc(variant.createdAt)],
+            },
+        },
+    });
+
+    if (!product) {
+        const redirect = await db.query.productSlugRedirectsTable.findFirst({
+            where: (r, { eq }) => eq(r.sourceSlug, slug),
+        });
+
+        if (redirect) {
+            targetSlug = redirect.targetSlug;
+            product = await db.query.productsTable.findFirst({
+                where: (p, { eq }) => eq(p.slug, targetSlug),
+                columns: {
+                    searchVector: false,
+                },
+                with: {
+                    productCategories: {
+                        with: {
+                            category: true,
+                        },
+                    },
+                    options: {
+                        orderBy: (opt, { asc }) => [asc(opt.position), asc(opt.createdAt)],
+                        with: {
+                            values: {
+                                orderBy: (val, { asc }) => [asc(val.position), asc(val.createdAt)],
+                            },
+                        },
+                    },
+                    variants: {
+                        orderBy: (variant, { asc }) => [asc(variant.createdAt)],
+                    },
+                },
+            });
+        }
+    }
+
+    if (!product) {
+        throw new NotFoundError("Product not found");
+    }
+
+    return GetProductSchema.parse(mapProductCategories(product));
+};
+
+export const createProduct = async (data: TCreateProductOutput): Promise<TProductModel> => {
     if (data.status === "scheduled" && !data.publishedAt) {
         throw new BadRequestError("publishedAt is required when status is 'scheduled'");
     }
@@ -620,7 +811,10 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         ? Math.min(...variants.map((v) => Number(v.sellPrice)))
         : (data.sellPrice ?? 0);
     const initialStock = variants && variants.length > 0 && productInsertData.inventoryType === "discrete"
-        ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+        ? variants.reduce((sum, v) => {
+            const effectiveType = resolveEffectiveInventoryType(v.inventoryType, productInsertData.inventoryType);
+            return sum + (effectiveType === "discrete" ? Number(v.stock ?? 0) : 0);
+        }, 0)
         : (data.stock ?? 0);
 
     const [product] = await db.insert(productsTable).values({
@@ -647,6 +841,7 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
                 productId: product.id,
                 name: opt.name,
                 position: opt.position ?? optIdx,
+                variantTypeId: opt.variantTypeId ?? null,
             }).returning();
 
             if (opt.values && opt.values.length > 0) {
@@ -673,7 +868,6 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
                 : `${product.slug}-default`
             ).toLowerCase();
             const isDefault = v.isDefault ?? (i === 0);
-            const variantInvType = v.inventoryType ?? product.inventoryType ?? "discrete";
 
             await db.insert(productVariantsTable).values({
                 productId: product.id,
@@ -681,12 +875,10 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
                 sku,
                 optionValues: v.optionValues ?? {},
                 signature,
-                inventoryType: variantInvType,
+                inventoryType: v.inventoryType ?? null,
                 purchasePrice: v.purchasePrice ?? 0,
                 sellPrice: v.sellPrice,
                 stock: v.stock ?? 0,
-                weight: v.weight ?? product.weight ?? null,
-                weightUnit: v.weightUnit ?? product.baseWeightUnit ?? null,
                 poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
                 isDefault,
                 isActive: v.isActive ?? true,
@@ -695,7 +887,6 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         }
         await syncProductAggregateReadModel(db, product.id);
     } else {
-        // Enforce canonical purchasable entity: auto-create default variant for simple products
         let defaultSku = `${product.slug}-default`.toLowerCase();
         let counter = 1;
         while (await db.query.productVariantsTable.findFirst({ where: (v, { eq }) => eq(v.sku, defaultSku) })) {
@@ -713,8 +904,6 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
             purchasePrice: purchasePrice ?? 0,
             sellPrice: product.sellPrice,
             stock: product.stock ?? 0,
-            weight: product.weight != null ? product.weight : null,
-            weightUnit: product.baseWeightUnit ?? null,
             poolConsumptionRate: null,
             isDefault: true,
             isActive: true,
@@ -725,7 +914,7 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
     return product;
 };
 
-const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutput["data"]): Promise<TProductModel> => {
+export const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutput["data"]): Promise<TProductModel> => {
     let existingProduct = await db.query.productsTable.findFirst({
         where: (product, { eq, and, isNull }) => {
             return and(eq(product.slug, slug), isNull(product.deletedAt));
@@ -781,7 +970,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
 
             const wasEverPublished = existingProduct.publishedAt != null || existingProduct.status === "published";
             if (wasEverPublished) {
-                // If reverting to a previously redirected slug for this same product, delete the redirect record
                 await db.delete(productSlugRedirectsTable).where(
                     and(
                         eq(productSlugRedirectsTable.productId, existingProduct.id),
@@ -789,7 +977,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                     )
                 );
 
-                // Insert the new redirect for the old slug
                 await db.insert(productSlugRedirectsTable).values({
                     productId: existingProduct.id,
                     sourceSlug: existingProduct.slug,
@@ -799,7 +986,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                     set: { targetSlug: newSlug },
                 });
 
-                // Flatten all historical redirects for this product to point directly to newSlug (1-hop 301)
                 await db.update(productSlugRedirectsTable)
                     .set({ targetSlug: newSlug })
                     .where(eq(productSlugRedirectsTable.productId, existingProduct.id));
@@ -832,6 +1018,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                         productId: existingProduct.id,
                         name: opt.name,
                         position: opt.position ?? optIdx,
+                        variantTypeId: opt.variantTypeId ?? null,
                     }).returning();
 
                     if (opt.values && opt.values.length > 0) {
@@ -862,7 +1049,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                         : `${targetSlug}-default`
                     ).toLowerCase();
                     const isDefault = v.isDefault ?? (i === 0);
-                    const variantInvType = v.inventoryType ?? existingProduct.inventoryType ?? "discrete";
 
                     await db.insert(productVariantsTable).values({
                         productId: existingProduct.id,
@@ -870,12 +1056,10 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                         sku,
                         optionValues: v.optionValues ?? {},
                         signature,
-                        inventoryType: variantInvType,
+                        inventoryType: v.inventoryType ?? null,
                         purchasePrice: v.purchasePrice ?? 0,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,
-                        weight: v.weight ?? null,
-                        weightUnit: v.weightUnit ?? null,
                         poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
                         isDefault,
                         isActive: v.isActive ?? true,
@@ -884,7 +1068,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                 }
                 await syncProductAggregateReadModel(db, existingProduct.id);
             } else {
-                // Variants array explicitly cleared: re-create default variant for simple product
                 const targetSlug = updateData.slug ?? existingProduct.slug;
                 let defaultSku = `${targetSlug}-default`.toLowerCase();
                 let counter = 1;
@@ -910,7 +1093,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                 });
             }
         } else {
-            // variants undefined -> sync product-level updates to simple product default variant if present
             const existingVariants = await db.query.productVariantsTable.findMany({
                 where: (v, { eq }) => eq(v.productId, existingProduct.id),
             });
@@ -925,8 +1107,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                     if (updateData.stock !== undefined) variantSyncData.stock = updateData.stock;
                     if (updateData.inventoryType !== undefined) variantSyncData.inventoryType = updateData.inventoryType;
                     if (updateData.featuredImageUrl !== undefined) variantSyncData.imageUrl = updateData.featuredImageUrl;
-                    if (updateData.weight !== undefined) variantSyncData.weight = updateData.weight;
-                    if (updateData.baseWeightUnit !== undefined) variantSyncData.weightUnit = updateData.baseWeightUnit;
 
                     if (Object.keys(variantSyncData).length > 0) {
                         await db.update(productVariantsTable)
@@ -935,7 +1115,6 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                     }
                 }
             } else if (existingVariants.length === 0) {
-                // In case a simple product has no variants, create default variant
                 const targetSlug = updateData.slug ?? existingProduct.slug;
                 let defaultSku = `${targetSlug}-default`.toLowerCase();
                 let counter = 1;
@@ -972,7 +1151,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
     throw new NotFoundError("Product not found");
 };
 
-const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
+export const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
     let targetSlug = slug;
     const directExists = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNull }) => and(eq(p.slug, slug), isNull(p.deletedAt)),
@@ -998,7 +1177,7 @@ const deleteProductBySlug = async (slug: TProductSlug): Promise<TProductModel> =
     return product;
 };
 
-const restoreProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
+export const restoreProductBySlug = async (slug: TProductSlug): Promise<TProductModel> => {
     let targetSlug = slug;
     const directExists = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNotNull }) => and(eq(p.slug, slug), isNotNull(p.deletedAt)),
@@ -1024,7 +1203,7 @@ const restoreProductBySlug = async (slug: TProductSlug): Promise<TProductModel> 
     return product;
 };
 
-const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestions> => {
+export const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestions> => {
     const trimmed = query.q.trim();
     if (!trimmed) {
         return {
@@ -1096,7 +1275,6 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
     let matchedProducts = initialProducts;
     let matchedCategories = initialCategories;
 
-    // Trigram fuzzy fallback for product suggestions if exact prefix search yielded 0 matches
     if (matchedProducts.length === 0) {
         matchedProducts = await db.query.productsTable.findMany({
             where: and(
@@ -1129,7 +1307,6 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
         });
     }
 
-    // Trigram fuzzy fallback for categories if prefix match yielded 0 matches
     if (matchedCategories.length === 0) {
         matchedCategories = await db.query.categoriesTable.findMany({
             where: sql`(${categoriesTable.name} % ${trimmed} OR word_similarity(${trimmed}, ${categoriesTable.name}) > 0.25)`,
@@ -1167,7 +1344,7 @@ const suggestProducts = async (query: TSuggestQuery): Promise<TProductSuggestion
     });
 };
 
-const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promise<TGetProductsPublic> => {
+export const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promise<TGetProductsPublic> => {
     const sourceProduct = await db.query.productsTable.findFirst({
         where: (product, { eq, and, or, lte, isNull }) =>
             and(
@@ -1242,7 +1419,7 @@ const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promis
     const relatedProducts = await db.query.productsTable.findMany({
         where: (product, { inArray }) => inArray(product.id, candidateIds),
         columns: {
-                        updatedAt: false,
+            updatedAt: false,
             deletedAt: false,
             searchVector: false,
         },
@@ -1261,7 +1438,7 @@ const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promis
     return GetProductsPublicSchema.parse(relatedProducts.map(mapProductCategories));
 };
 
-const addVariantToProduct = async (
+export const addVariantToProduct = async (
     productSlug: TProductSlug,
     input: TCreateProductVariantInput
 ): Promise<TProductVariant> => {
@@ -1269,7 +1446,7 @@ const addVariantToProduct = async (
 
     const product = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
-        columns: { id: true, slug: true, stock: true, inventoryType: true, baseWeightUnit: true },
+        columns: { id: true, slug: true, stock: true, poolStock: true, inventoryType: true },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
@@ -1314,7 +1491,6 @@ const addVariantToProduct = async (
 
     let isDefault = parsed.isDefault;
     if (isOnlyDefaultDummy && hasNewOptionValues) {
-        // Upgrade from simple to variable product by replacing placeholder default variant
         await db.delete(productVariantsTable).where(eq(productVariantsTable.id, existingVariants[0].id));
         isDefault = true;
     } else if (isDefault) {
@@ -1329,8 +1505,6 @@ const addVariantToProduct = async (
         }
     }
 
-    const variantInvType = parsed.inventoryType ?? product.inventoryType ?? "discrete";
-
     const [variant] = await db
         .insert(productVariantsTable)
         .values({
@@ -1339,13 +1513,11 @@ const addVariantToProduct = async (
             sku,
             optionValues: parsed.optionValues ?? {},
             signature,
-            inventoryType: variantInvType,
+            inventoryType: parsed.inventoryType ?? null,
             purchasePrice: parsed.purchasePrice,
             sellPrice: parsed.sellPrice,
             stock: parsed.stock ?? 0,
             poolConsumptionRate: parsed.poolConsumptionRate != null ? parsed.poolConsumptionRate : null,
-            weight: parsed.weight != null ? parsed.weight : null,
-            weightUnit: parsed.weightUnit ?? null,
             isDefault,
             isActive: parsed.isActive ?? true,
             imageUrl: parsed.imageUrl ?? null,
@@ -1354,9 +1526,10 @@ const addVariantToProduct = async (
 
     await syncProductAggregateReadModel(db, product.id);
 
-    const computedStock = calculateVariantStock({
-        masterStock: Number(product.stock),
-        inventoryType: variantInvType,
+    const effectiveInvType = resolveEffectiveInventoryType(variant.inventoryType, product.inventoryType);
+    const stockCalc = calculateVariantStock({
+        masterPoolStock: Number(product.poolStock ?? 0),
+        inventoryType: effectiveInvType,
         variantStock: Number(variant.stock),
         poolConsumptionRate: variant.poolConsumptionRate != null ? Number(variant.poolConsumptionRate) : null,
     });
@@ -1365,15 +1538,16 @@ const addVariantToProduct = async (
         ...variant,
         optionValues: variant.optionValues ?? {},
         signature: variant.signature,
-        inventoryType: variant.inventoryType,
+        inventoryType: effectiveInvType,
         purchasePrice: Number(variant.purchasePrice),
         sellPrice: Number(variant.sellPrice),
-        stock: computedStock,
+        stock: stockCalc.stock,
+        isUnlimited: stockCalc.isUnlimited,
         ...(variant.poolConsumptionRate != null ? { poolConsumptionRate: Number(variant.poolConsumptionRate) } : {}),
     });
 };
 
-const updateVariant = async (
+export const updateVariant = async (
     productSlug: TProductSlug,
     variantId: string,
     input: TUpdateProductVariantInput
@@ -1382,7 +1556,7 @@ const updateVariant = async (
 
     const product = await db.query.productsTable.findFirst({
         where: (p, { eq, and, isNull }) => and(eq(p.slug, productSlug), isNull(p.deletedAt)),
-        columns: { id: true, slug: true, stock: true, inventoryType: true },
+        columns: { id: true, slug: true, stock: true, poolStock: true, inventoryType: true },
     });
     if (!product) {
         throw new NotFoundError("Product not found");
@@ -1440,11 +1614,10 @@ const updateVariant = async (
 
     await syncProductAggregateReadModel(db, product.id);
 
-    const variantInvType = updated.inventoryType ?? product.inventoryType ?? "discrete";
-
-    const computedStock = calculateVariantStock({
-        masterStock: Number(product.stock),
-        inventoryType: variantInvType,
+    const effectiveInvType = resolveEffectiveInventoryType(updated.inventoryType, product.inventoryType);
+    const stockCalc = calculateVariantStock({
+        masterPoolStock: Number(product.poolStock ?? 0),
+        inventoryType: effectiveInvType,
         variantStock: Number(updated.stock),
         poolConsumptionRate: updated.poolConsumptionRate != null ? Number(updated.poolConsumptionRate) : null,
     });
@@ -1453,15 +1626,16 @@ const updateVariant = async (
         ...updated,
         optionValues: updated.optionValues ?? {},
         signature: updated.signature,
-        inventoryType: updated.inventoryType,
+        inventoryType: effectiveInvType,
         purchasePrice: Number(updated.purchasePrice),
         sellPrice: Number(updated.sellPrice),
-        stock: computedStock,
+        stock: stockCalc.stock,
+        isUnlimited: stockCalc.isUnlimited,
         ...(updated.poolConsumptionRate != null ? { poolConsumptionRate: Number(updated.poolConsumptionRate) } : {}),
     });
 };
 
-const deleteVariant = async (
+export const deleteVariant = async (
     productSlug: TProductSlug,
     variantId: string
 ): Promise<void> => {
@@ -1508,7 +1682,7 @@ const deleteVariant = async (
     await syncProductAggregateReadModel(db, product.id);
 };
 
-const createProductOption = async (
+export const createProductOption = async (
     productSlug: TProductSlug,
     input: TCreateProductOptionInput
 ): Promise<TProductOptionItem> => {
@@ -1532,6 +1706,7 @@ const createProductOption = async (
         productId: product.id,
         name: parsed.name,
         position: parsed.position,
+        variantTypeId: parsed.variantTypeId ?? null,
     }).returning();
 
     let values: TOptionValueItem[] = [];
@@ -1549,13 +1724,14 @@ const createProductOption = async (
     return ProductOptionItemSchema.parse({
         id: option.id,
         productId: option.productId,
+        variantTypeId: option.variantTypeId ?? null,
         name: option.name,
         position: option.position,
         values,
     });
 };
 
-const updateProductOption = async (
+export const updateProductOption = async (
     productSlug: TProductSlug,
     optionId: string,
     input: TUpdateProductOptionInput
@@ -1594,13 +1770,14 @@ const updateProductOption = async (
     return ProductOptionItemSchema.parse({
         id: updated.id,
         productId: updated.productId,
+        variantTypeId: updated.variantTypeId ?? null,
         name: updated.name,
         position: updated.position,
         values: existingOption.values ?? [],
     });
 };
 
-const deleteProductOption = async (
+export const deleteProductOption = async (
     productSlug: TProductSlug,
     optionId: string
 ): Promise<void> => {
@@ -1634,7 +1811,7 @@ const deleteProductOption = async (
     await db.delete(productOptionsTable).where(eq(productOptionsTable.id, optionId));
 };
 
-const createOptionValue = async (
+export const createOptionValue = async (
     productSlug: TProductSlug,
     optionId: string,
     input: TCreateOptionValueInput
@@ -1672,7 +1849,7 @@ const createOptionValue = async (
     return OptionValueItemSchema.parse(value);
 };
 
-const updateOptionValue = async (
+export const updateOptionValue = async (
     productSlug: TProductSlug,
     optionId: string,
     valueId: string,
@@ -1718,7 +1895,7 @@ const updateOptionValue = async (
     return OptionValueItemSchema.parse(updated);
 };
 
-const deleteOptionValue = async (
+export const deleteOptionValue = async (
     productSlug: TProductSlug,
     optionId: string,
     valueId: string
@@ -1760,7 +1937,7 @@ const deleteOptionValue = async (
     await db.delete(productOptionValuesTable).where(eq(productOptionValuesTable.id, valueId));
 };
 
-const generateVariantMatrix = async (
+export const generateVariantMatrix = async (
     productSlug: TProductSlug,
     input: TGenerateMatrixInput
 ) => {
@@ -1792,6 +1969,7 @@ const generateVariantMatrix = async (
                 purchasePrice: defaultPurchase,
                 stock: defaultStock,
                 inventoryType: defaultInvType,
+                poolConsumptionRate: perm.poolConsumptionRate ?? parsed.defaultPoolConsumptionRate ?? null,
                 isDefault: idx === 0,
             })),
         };
@@ -1809,6 +1987,7 @@ const generateVariantMatrix = async (
                     productId: product.id,
                     name: opt.name,
                     position: optIdx,
+                    variantTypeId: opt.variantTypeId ?? null,
                 }).returning();
                 existingOption = newOpt;
             }
@@ -1877,6 +2056,7 @@ const generateVariantMatrix = async (
                 sellPrice: defaultSell,
                 purchasePrice: defaultPurchase,
                 stock: defaultStock,
+                poolConsumptionRate: perm.poolConsumptionRate ?? parsed.defaultPoolConsumptionRate ?? null,
                 isDefault,
                 isActive: true,
             }).returning();
@@ -1896,6 +2076,7 @@ const generateVariantMatrix = async (
             sellPrice: Number(v.sellPrice),
             purchasePrice: Number(v.purchasePrice),
             stock: Number(v.stock),
+            poolConsumptionRate: v.poolConsumptionRate != null ? Number(v.poolConsumptionRate) : null,
         })),
     };
 };
@@ -1923,6 +2104,11 @@ const productsActions = {
     deleteOptionValue,
     generateVariantMatrix,
     syncProductAggregateReadModel,
+    createVariantType,
+    getVariantTypes,
+    getVariantTypeById,
+    updateVariantType,
+    deleteVariantType,
 };
 
 export default productsActions;

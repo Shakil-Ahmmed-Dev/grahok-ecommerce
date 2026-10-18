@@ -1,107 +1,77 @@
-import { type TInventoryType, type TWeightUnit } from "./constants";
-
-// Conversion factors relative to standard base units
-// Mass base: grams (g)
-const MASS_TO_GRAMS: Partial<Record<TWeightUnit, number>> = {
-    mg: 0.001,
-    g: 1,
-    kg: 1000,
-    oz: 28.3495,
-    lb: 453.592,
-};
-
-// Volume base: milliliters (ml)
-const VOLUME_TO_ML: Partial<Record<TWeightUnit, number>> = {
-    ml: 1,
-    l: 1000,
-};
-
-// Count base: pieces (pcs)
-const COUNT_TO_PCS: Partial<Record<TWeightUnit, number>> = {
-    pcs: 1,
-};
+import { type TInventoryType } from "./constants";
 
 /**
- * Converts a numeric value from one weight/volume/count unit to another within the same dimension.
- * Returns null if the units are from different physical dimensions without an explicit conversion factor.
+ * Resolves the effective inventory type for a variant.
+ * If the variant explicitly defines an inventory type, it takes precedence.
+ * Otherwise, falls back to the product's inventory policy, defaulting to "discrete".
  */
-export function convertWeightUnit(
-    value: number,
-    fromUnit: TWeightUnit,
-    toUnit: TWeightUnit
-): number | null {
-    if (fromUnit === toUnit) {
-        return value;
-    }
-
-    if (fromUnit in MASS_TO_GRAMS && toUnit in MASS_TO_GRAMS) {
-        const inGrams = value * MASS_TO_GRAMS[fromUnit]!;
-        return inGrams / MASS_TO_GRAMS[toUnit]!;
-    }
-
-    if (fromUnit in VOLUME_TO_ML && toUnit in VOLUME_TO_ML) {
-        const inMl = value * VOLUME_TO_ML[fromUnit]!;
-        return inMl / VOLUME_TO_ML[toUnit]!;
-    }
-
-    if (fromUnit in COUNT_TO_PCS && toUnit in COUNT_TO_PCS) {
-        const inPcs = value * COUNT_TO_PCS[fromUnit]!;
-        return inPcs / COUNT_TO_PCS[toUnit]!;
-    }
-
-    return null;
+export function resolveEffectiveInventoryType(
+    variantInventoryType?: TInventoryType | null,
+    productInventoryType?: TInventoryType | null
+): TInventoryType {
+    return variantInventoryType ?? productInventoryType ?? "discrete";
 }
 
 export interface CalculateVariantStockParams {
-    masterStock: number;
+    masterPoolStock?: number | null;
     inventoryType: TInventoryType;
-    variantStock: number;
-    weightValue?: number | null;
-    weightUnit?: TWeightUnit | null;
-    baseWeightUnit?: TWeightUnit | null;
+    variantStock?: number | null;
     poolConsumptionRate?: number | null;
 }
 
+export interface CalculateVariantStockResult {
+    stock: number | null;
+    isUnlimited: boolean;
+    inventoryType: TInventoryType;
+}
+
 /**
- * Calculates effective available stock for a product variant.
- * - For 'discrete' inventory, returns the variant's own standalone stock count.
- * - For 'shared_pool' inventory, dynamically calculates how many packaged units can be served
- *   from the master product stock pool based on explicit poolConsumptionRate or unit conversion.
+ * Calculates effective available stock and availability policy for a product variant.
+ * - 'no_tracking': stock = null, isUnlimited = true (always purchasable, digital/service/untracked goods).
+ * - 'discrete': stock = variantStock, isUnlimited = false (variant's own dedicated stock count).
+ * - 'shared_pool': stock = masterPoolStock / (poolConsumptionRate || 1), isUnlimited = false (derived from master pool).
  */
 export function calculateVariantStock({
-    masterStock,
+    masterPoolStock,
     inventoryType,
     variantStock,
-    weightValue,
-    weightUnit,
-    baseWeightUnit,
     poolConsumptionRate,
-}: CalculateVariantStockParams): number {
-    if (inventoryType !== "shared_pool") {
-        return variantStock;
+}: CalculateVariantStockParams): CalculateVariantStockResult {
+    if (inventoryType === "no_tracking") {
+        return {
+            stock: null,
+            isUnlimited: true,
+            inventoryType: "no_tracking",
+        };
     }
 
-    if (masterStock <= 0) {
-        return 0;
+    if (inventoryType === "discrete") {
+        return {
+            stock: variantStock != null ? Math.max(0, Math.floor(Number(variantStock))) : 0,
+            isUnlimited: false,
+            inventoryType: "discrete",
+        };
     }
 
-    // 1. Explicit consumption rate override takes precedence
-    if (poolConsumptionRate != null && poolConsumptionRate > 0) {
-        return Math.floor(masterStock / poolConsumptionRate);
+    // shared_pool
+    const pool = Number(masterPoolStock ?? 0);
+    if (pool <= 0) {
+        return {
+            stock: 0,
+            isUnlimited: false,
+            inventoryType: "shared_pool",
+        };
     }
 
-    // 2. Unit conversion to master pool unit (if weight parameters are present)
-    if (baseWeightUnit && weightValue && weightUnit) {
-        const rate = convertWeightUnit(weightValue, weightUnit, baseWeightUnit);
-        if (rate != null && rate > 0) {
-            return Math.floor(masterStock / rate);
-        }
-    }
+    const rate = poolConsumptionRate != null && Number(poolConsumptionRate) > 0
+        ? Number(poolConsumptionRate)
+        : 1;
 
-    // 3. Fallback: weightValue if units match or conversion is direct
-    if (weightValue && weightValue > 0) {
-        return Math.floor(masterStock / weightValue);
-    }
+    const stock = Math.floor(pool / rate);
 
-    return Math.floor(masterStock);
+    return {
+        stock: Math.max(0, stock),
+        isUnlimited: false,
+        inventoryType: "shared_pool",
+    };
 }

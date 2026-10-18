@@ -185,7 +185,30 @@ export const buildProductConditions = (
     }
 
     if (query.inStock === true) {
-        conditions.push(gt(productsTable.stock, 0));
+        conditions.push(
+            or(
+                eq(productsTable.inventoryType, "no_tracking"),
+                and(
+                    eq(productsTable.inventoryType, "shared_pool"),
+                    gt(productsTable.poolStock, 0)
+                ),
+                and(
+                    eq(productsTable.inventoryType, "discrete"),
+                    gt(productsTable.stock, 0)
+                ),
+                sql`EXISTS (
+                    SELECT 1 FROM ${productVariantsTable} pv
+                    WHERE pv.product_id = ${productsTable.id}
+                      AND pv.is_active = true
+                      AND pv.deleted_at IS NULL
+                      AND (
+                          pv.inventory_type = 'no_tracking'
+                          OR (pv.inventory_type = 'discrete' AND pv.stock > 0)
+                          OR (pv.inventory_type = 'shared_pool' AND ${productsTable.poolStock} > 0)
+                      )
+                )`
+            )!
+        );
     }
 
     return and(...conditions);
