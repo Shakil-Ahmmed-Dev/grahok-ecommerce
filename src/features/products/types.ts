@@ -117,6 +117,8 @@ export const ProductVariantPublicSchema = z.object({
     sellPrice: z.number(),
     stock: z.number(),
     poolConsumptionRate: z.number().nullable().optional(),
+    weight: z.number().nullable().optional(),
+    weightUnit: WeightUnitSchema.nullable().optional(),
     isDefault: z.boolean(),
     isActive: z.boolean(),
     imageUrl: z.string().nullable().optional(),
@@ -127,6 +129,7 @@ export const ProductVariantSchema = ProductVariantPublicSchema.extend({
     purchasePrice: z.number(),
     createdAt: z.date().or(z.string()),
     updatedAt: z.date().or(z.string()),
+    deletedAt: z.date().or(z.string()).nullable().optional(),
 });
 export type TProductVariant = z.infer<typeof ProductVariantSchema>;
 
@@ -136,10 +139,12 @@ export const CreateProductVariantSchema = z.object({
     optionValues: OptionValuesMapSchema.default({}),
     signature: z.string().trim().optional(),
     inventoryType: InventoryTypeSchema.optional(),
-    purchasePrice: z.coerce.number().nonnegative("Purchase price must be a non-negative number"),
+    purchasePrice: z.coerce.number().nonnegative("Purchase price must be a non-negative number").default(0),
     sellPrice: z.coerce.number().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number().nonnegative("Stock must be a non-negative number").default(0),
     poolConsumptionRate: z.coerce.number().positive("Pool consumption rate must be greater than 0").nullable().optional(),
+    weight: z.coerce.number().nonnegative().nullable().optional(),
+    weightUnit: WeightUnitSchema.nullable().optional(),
     isDefault: z.boolean().default(false),
     isActive: z.boolean().default(true),
     imageUrl: z.url("Image URL must be a valid URL").trim().nullable().optional(),
@@ -165,6 +170,7 @@ export type TProductCategoryItem = z.infer<typeof ProductCategoryItemSchema>;
 export const ProductModelSchema = createSelectSchema(productsTable, {
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
     baseWeightUnit: WeightUnitSchema.nullable().optional(),
+    weight: z.coerce.number().nonnegative().nullable().optional(),
 });
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 
@@ -183,7 +189,6 @@ export const GetProductsSchema = GetProductSchema.array();
 export type TGetProducts = z.infer<typeof GetProductsSchema>;
 
 export const GetProductPublicBaseSchema = ProductModelSchema.omit({
-    purchasePrice: true,
     createdAt: true,
     updatedAt: true,
     deletedAt: true,
@@ -278,14 +283,15 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     shortDescription: z.string().trim().max(500, "Short description cannot exceed 500 characters").optional(),
     description: z.string().trim().optional(),
     featuredImageUrl: z.url().trim().min(1, "Featured image URL is required"),
-    purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number"),
-    sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number"),
+    sellPrice: z.coerce.number<string>().nonnegative("Sell price must be a non-negative number").optional(),
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
+    weight: z.coerce.number<string>().nonnegative().optional().nullable(),
     baseWeightUnit: WeightUnitSchema.optional().nullable(),
     status: ProductStatusSchema.default(ProductStatusSchema.enum.draft),
     publishedAt: z.coerce.date().optional().nullable(),
 }).extend({
+    purchasePrice: z.coerce.number<string>().nonnegative("Purchase price must be a non-negative number").optional(),
     categoryIds: z.array(z.string().trim().min(1)).optional(),
     primaryCategoryId: z.string().trim().min(1).optional(),
     options: z.array(CreateProductOptionSchema).optional(),

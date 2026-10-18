@@ -55,9 +55,6 @@ export const productsTable = pgTable("products", {
     tags: jsonb().$type<TProductTags>().notNull().default([]),
     featuredImageUrl: text().notNull(),
     images: jsonb().$type<TProductImages>().notNull().default([]),
-    purchasePrice: numeric<"number">({
-        scale: 2,
-    }).notNull(),
     sellPrice: numeric<"number">({
         scale: 2,
     }).notNull(),
@@ -65,6 +62,9 @@ export const productsTable = pgTable("products", {
         scale: 2,
     }).notNull().default(0),
     inventoryType: inventoryTypeEnum("inventory_type").notNull().default("discrete"),
+    weight: numeric<"number">({
+        scale: 3,
+    }),
     baseWeightUnit: weightUnitEnum("base_weight_unit"),
     status: productStatusEnum().notNull().default(PRODUCT_STATUSES[0]),
     publishedAt: timestamp(),
@@ -171,6 +171,10 @@ export const productVariantsTable = pgTable("product_variants", {
     poolConsumptionRate: numeric<"number">({
         scale: 4,
     }),
+    weight: numeric<"number">({
+        scale: 3,
+    }),
+    weightUnit: weightUnitEnum("weight_unit"),
     isDefault: boolean("is_default").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     imageUrl: text(),
@@ -178,11 +182,13 @@ export const productVariantsTable = pgTable("product_variants", {
     updatedAt: timestamp().defaultNow()
         .$onUpdate(() => /* @__PURE__ */ new Date())
         .notNull(),
+    deletedAt: timestamp(),
 }, (table) => [
     unique("product_variants_product_signature_unique").on(table.productId, table.signature),
     index("product_variants_product_id_idx").on(table.productId),
     index("product_variants_sku_idx").on(table.sku),
     index("product_variants_product_active_idx").on(table.productId, table.isActive),
+    index("product_variants_deleted_at_idx").on(table.deletedAt),
     index("product_variants_option_values_idx").using("gin", table.optionValues),
 ]);
 

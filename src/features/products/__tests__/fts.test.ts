@@ -42,7 +42,7 @@ import {
     resolveUniqueSku,
 } from "@/features/products/matrix";
 import { calculateVariantStock, convertWeightUnit } from "@/features/products/inventory";
-import { PermanentRedirectError } from "@/lib/error";
+import { BadRequestError, PermanentRedirectError } from "@/lib/error";
 import { handleError } from "@/lib/http";
 
 const dialect = new PgDialect();
@@ -168,13 +168,33 @@ async function runTests() {
 
     const parsedAdmin = GetProductSchema.parse({
         ...dummyProduct,
-        purchasePrice: "50.00",
         createdAt: new Date(),
         updatedAt: new Date(),
         deletedAt: null,
+        variants: [
+            {
+                id: "v-admin-01",
+                productId: dummyProduct.id,
+                title: "Default",
+                sku: "headphones-default",
+                optionValues: {},
+                signature: "default",
+                inventoryType: "discrete" as const,
+                purchasePrice: 50.00,
+                sellPrice: 99.99,
+                stock: 10,
+                poolConsumptionRate: null,
+                isDefault: true,
+                isActive: true,
+                imageUrl: null,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            },
+        ],
     });
     console.assert(!("searchVector" in parsedAdmin), "GetProductSchema must strip searchVector");
-    console.assert(Number(parsedAdmin.purchasePrice) === 50, "GetProductSchema retains purchasePrice");
+    console.assert(!("purchasePrice" in parsedAdmin), "GetProductSchema root product does not have purchasePrice");
+    console.assert(parsedAdmin.variants[0].purchasePrice === 50, "Variant in GetProductSchema retains purchasePrice");
     console.assert(parsedAdmin.categories.length === 1, "GetProductSchema retains categories");
     console.log("✔ Schema projections safely parse product and relational categories");
 
@@ -526,7 +546,6 @@ async function runTests() {
 
     const adminProduct = GetProductSchema.parse({
         ...mockProduct,
-        purchasePrice: "5.00",
         createdAt: new Date(),
         updatedAt: new Date(),
         deletedAt: null,
@@ -775,7 +794,135 @@ async function runTests() {
 
     console.log("✔ Slug 301/308 redirect engine, chain flattening, draft rules, and reversion simulations passed");
 
-    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, Shared Pool Inventory, and Slug 301 Redirect Engine tests PASSED successfully! 🚀");
+    console.log("\n=== 14. Testing Canonical Purchasable Entity Contract (Simple vs Variable Products) ===");
+
+    // 1. Simple product default variant creation specification
+    const mockSimpleProduct = {
+        id: "prod-simple-001",
+        name: "Wireless Noise-Cancelling Headphones",
+        slug: "wireless-noise-cancelling-headphones",
+        sellPrice: 99.99,
+        purchasePrice: 55.00,
+        stock: 120,
+        inventoryType: "discrete" as const,
+        featuredImageUrl: "https://example.com/headphones.jpg",
+    };
+
+    const generatedDefaultVariant = {
+        id: "var-default-001",
+        productId: mockSimpleProduct.id,
+        title: "Default",
+        sku: `${mockSimpleProduct.slug}-default`,
+        optionValues: {},
+        signature: normalizeVariantSignature({}),
+        inventoryType: mockSimpleProduct.inventoryType,
+        purchasePrice: mockSimpleProduct.purchasePrice,
+        sellPrice: mockSimpleProduct.sellPrice,
+        stock: mockSimpleProduct.stock,
+        poolConsumptionRate: null,
+        isDefault: true,
+        isActive: true,
+        imageUrl: mockSimpleProduct.featuredImageUrl,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+    };
+
+    console.assert(generatedDefaultVariant.signature === "default", "Default variant signature for empty optionValues is 'default'");
+    console.assert(generatedDefaultVariant.title === "Default", "Default variant title is 'Default'");
+    console.assert(generatedDefaultVariant.isDefault === true, "Default variant isDefault is true");
+    console.assert(generatedDefaultVariant.sku === "wireless-noise-cancelling-headphones-default", "Default SKU formatted with -default suffix");
+
+    const parsedDefaultAdmin = ProductVariantSchema.parse(generatedDefaultVariant);
+    console.assert(parsedDefaultAdmin.sellPrice === 99.99, "Admin variant schema parses default variant");
+    const parsedDefaultPublic = ProductVariantPublicSchema.parse(generatedDefaultVariant);
+    console.assert(parsedDefaultPublic.sku === "wireless-noise-cancelling-headphones-default", "Public variant schema parses default variant");
+    console.assert(!("purchasePrice" in parsedDefaultPublic), "Public variant schema omits purchasePrice");
+    console.log("✔ Canonical default variant payload validation and schema projections passed");
+
+    // 2. Detection of placeholder default variant vs configured option variants
+    const isOnlyDefaultPlaceholder = (variants: Array<{ isDefault: boolean; optionValues?: Record<string, string> }>) => {
+        return variants.length === 1 &&
+            variants[0].isDefault &&
+            (!variants[0].optionValues || Object.keys(variants[0].optionValues).length === 0);
+    };
+
+    console.assert(isOnlyDefaultPlaceholder([generatedDefaultVariant]) === true, "Correctly identifies placeholder default variant for simple product");
+    console.assert(isOnlyDefaultPlaceholder([{ isDefault: true, optionValues: { Size: "M" } }]) === false, "Configured option variant is not identified as placeholder");
+    console.assert(isOnlyDefaultPlaceholder([generatedDefaultVariant, { isDefault: false, optionValues: { Size: "L" } }]) === false, "Multiple variants are not identified as single placeholder");
+    console.log("✔ Placeholder default variant detection logic passed");
+
+    // 3. Variant deletion constraint (A product must have at least one variant)
+    const checkCanDeleteVariant = (totalVariantCount: number) => {
+        if (totalVariantCount <= 1) {
+            throw new BadRequestError("Cannot delete the only variant of a product. A product must have at least one variant.");
+        }
+    };
+
+    let deleteBlockedError: Error | null = null;
+    try {
+        checkCanDeleteVariant(1);
+    } catch (e) {
+        deleteBlockedError = e as Error;
+    }
+    console.assert(deleteBlockedError instanceof BadRequestError, "Attempting to delete the only variant throws BadRequestError");
+    console.assert(deleteBlockedError?.message.includes("Cannot delete the only variant"), "Error message explains constraint");
+
+    // Allowed when > 1 variant
+    let deleteAllowedThrew = false;
+    try {
+        checkCanDeleteVariant(3);
+    } catch {
+        deleteAllowedThrew = true;
+    }
+    console.assert(!deleteAllowedThrew, "Deleting a variant when multiple variants exist is permitted");
+    console.log("✔ Variant deletion lower-bound constraint passed");
+
+    // 4. Simple product attribute synchronization logic
+    const syncSimpleVariant = (
+        variant: typeof generatedDefaultVariant,
+        updates: Partial<{ sellPrice: number; purchasePrice: number; stock: number }>
+    ) => {
+        return {
+            ...variant,
+            ...(updates.sellPrice !== undefined ? { sellPrice: updates.sellPrice } : {}),
+            ...(updates.purchasePrice !== undefined ? { purchasePrice: updates.purchasePrice } : {}),
+            ...(updates.stock !== undefined ? { stock: updates.stock } : {}),
+        };
+    };
+
+    const syncedVariant = syncSimpleVariant(generatedDefaultVariant, { sellPrice: 89.99, stock: 150 });
+    console.assert(syncedVariant.sellPrice === 89.99, "Variant sellPrice synchronized");
+    console.assert(syncedVariant.stock === 150, "Variant stock synchronized");
+    console.assert(syncedVariant.purchasePrice === 55.00, "Unchanged attributes preserved");
+    console.log("✔ Simple product to default variant attribute synchronization passed");
+
+    // 5. Option B Read-Model Projection simulation (min sell price & discrete stock aggregate)
+    const mockVariants = [
+        { id: "v1", sellPrice: 25.00, stock: 10, isActive: true, deletedAt: null },
+        { id: "v2", sellPrice: 15.00, stock: 20, isActive: true, deletedAt: null },
+        { id: "v3", sellPrice: 35.00, stock: 5, isActive: false, deletedAt: null }, // inactive -> excluded
+        { id: "v4", sellPrice: 10.00, stock: 50, isActive: true, deletedAt: new Date() }, // soft-deleted -> excluded
+    ];
+
+    const activeNonDeleted = mockVariants.filter((v) => v.isActive && !v.deletedAt);
+    const projectedMinPrice = Math.min(...activeNonDeleted.map((v) => v.sellPrice));
+    const projectedTotalDiscreteStock = activeNonDeleted.reduce((sum, v) => sum + v.stock, 0);
+
+    console.assert(projectedMinPrice === 15.00, "Projected sellPrice is the minimum active non-deleted variant price ($15)");
+    console.assert(projectedTotalDiscreteStock === 30, "Projected discrete stock is sum of active non-deleted variants (10 + 20 = 30)");
+    console.log("✔ Option B read-model projection (minPrice & aggregate discrete stock) passed");
+
+    // 6. Soft delete variant validation
+    const deletedVariant = ProductVariantSchema.parse({
+        ...generatedDefaultVariant,
+        isActive: false,
+        deletedAt: new Date(),
+    });
+    console.assert(deletedVariant.isActive === false, "Soft-deleted variant has isActive=false");
+    console.assert(deletedVariant.deletedAt !== null, "Soft-deleted variant preserves deletedAt timestamp");
+    console.log("✔ Variant soft delete schema projection passed");
+
+    console.log("\nAll Full-Text Search, Fuzzy Search, Facets, Cursor, Recommendations, Variants, Shared Pool Inventory, Slug 301 Redirect Engine, Canonical Purchasable Entity Contract, and Option B Read-Model tests PASSED successfully! 🚀");
 }
 
 void runTests();

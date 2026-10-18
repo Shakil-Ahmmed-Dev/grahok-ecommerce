@@ -10,6 +10,7 @@ import {
     productVariantsTable,
 } from "./schemas/public";
 import { normalizeVariantSignature } from "@/features/products/matrix";
+import { syncProductAggregateReadModel } from "@/features/products/actions";
 
 interface SeedProductItem extends Omit<TCreateProductInput, "categoryIds" | "primaryCategoryId"> {
     categorySlug: string;
@@ -409,12 +410,21 @@ async function seed() {
             const { categorySlug, parentCategorySlug, ...productPayload } = item;
             const parsed = CreateProductSchema.parse(productPayload);
             const slug = slugify(parsed.slug ?? parsed.name);
-            const { categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, options, variants, ...productInsertData } = parsed;
+            const { purchasePrice, categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, options, variants, ...productInsertData } = parsed;
             void _categoryIds;
             void _primaryCategoryId;
 
+            const initialSellPrice = variants && variants.length > 0
+                ? Math.min(...variants.map((v) => Number(v.sellPrice)))
+                : (parsed.sellPrice ?? 0);
+            const initialStock = variants && variants.length > 0 && productInsertData.inventoryType === "discrete"
+                ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+                : (parsed.stock ?? 0);
+
             const [insertedProduct] = await db.insert(productsTable).values({
                 ...productInsertData,
+                sellPrice: initialSellPrice,
+                stock: initialStock,
                 slug,
             }).returning();
 
@@ -484,7 +494,28 @@ async function seed() {
                         imageUrl: v.imageUrl ?? null,
                     });
                 }
+            } else {
+                // Seed simple product default variant for canonical purchasable entity contract
+                const defaultSku = `${insertedProduct.slug}-default`.toLowerCase();
+                const variantInvType = insertedProduct.inventoryType ?? "discrete";
+
+                await db.insert(productVariantsTable).values({
+                    productId: insertedProduct.id,
+                    title: "Default",
+                    sku: defaultSku,
+                    optionValues: {},
+                    signature: "default",
+                    inventoryType: variantInvType,
+                    purchasePrice: purchasePrice ?? 0,
+                    sellPrice: insertedProduct.sellPrice,
+                    stock: insertedProduct.stock ?? 0,
+                    poolConsumptionRate: null,
+                    isDefault: true,
+                    isActive: true,
+                    imageUrl: insertedProduct.featuredImageUrl ?? null,
+                });
             }
+            await syncProductAggregateReadModel(db, insertedProduct.id);
         }
         console.log(`Inserted ${dummyProducts.length} products with category associations and variants.`);
     } else {

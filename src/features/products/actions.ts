@@ -175,6 +175,44 @@ function mapProductCategories<T extends {
     };
 }
 
+export const syncProductAggregateReadModel = async (
+    executor: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
+    productId: string
+): Promise<void> => {
+    const product = await executor.query.productsTable.findFirst({
+        where: (p, { eq }) => eq(p.id, productId),
+        columns: { id: true, inventoryType: true, stock: true },
+    });
+    if (!product) return;
+
+    const activeVariants = await executor.query.productVariantsTable.findMany({
+        where: (v, { eq, and, isNull }) => and(
+            eq(v.productId, productId),
+            eq(v.isActive, true),
+            isNull(v.deletedAt)
+        ),
+        columns: { sellPrice: true, stock: true, isDefault: true },
+    });
+
+    if (activeVariants.length === 0) return;
+
+    const minSellPrice = Math.min(...activeVariants.map((v) => Number(v.sellPrice)));
+
+    const updateFields: { sellPrice: number; stock?: number } = {
+        sellPrice: minSellPrice,
+    };
+
+    if (product.inventoryType === "discrete") {
+        const totalDiscreteStock = activeVariants.reduce((sum, v) => sum + Number(v.stock), 0);
+        updateFields.stock = totalDiscreteStock;
+    }
+
+    await executor
+        .update(productsTable)
+        .set(updateFields)
+        .where(eq(productsTable.id, productId));
+};
+
 const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
     const searchQuery = buildProductSearchQuery(query.search);
     const effectiveSort = resolveProductSort(query);
@@ -205,8 +243,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
             offset,
             limit,
             columns: {
-                purchasePrice: false,
-                updatedAt: false,
+                                updatedAt: false,
                 deletedAt: false,
                 searchVector: false,
             },
@@ -238,8 +275,7 @@ const getProducts = async (query: TProductQuery): Promise<TProductsList> => {
                     offset,
                     limit,
                     columns: {
-                        purchasePrice: false,
-                        updatedAt: false,
+                                                updatedAt: false,
                         deletedAt: false,
                         searchVector: false,
                     },
@@ -306,8 +342,7 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
             );
         },
         columns: {
-            purchasePrice: false,
-            createdAt: false,
+                        createdAt: false,
             updatedAt: false,
             deletedAt: false,
             searchVector: false,
@@ -327,7 +362,7 @@ const getProductBySlug = async (slug: TProductSlug): Promise<TGetProductPublic> 
                 },
             },
             variants: {
-                where: (variant, { eq }) => eq(variant.isActive, true),
+                where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
                 orderBy: (variant, { asc }) => [asc(variant.createdAt)],
             },
         },
@@ -538,7 +573,7 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         data.publishedAt = new Date();
     }
 
-    const { categoryIds, primaryCategoryId, options, variants, ...productInsertData } = data;
+    const { purchasePrice, categoryIds, primaryCategoryId, options, variants, ...productInsertData } = data;
 
     const explicitSlug = data.slug;
     const baseSlug = explicitSlug
@@ -581,7 +616,19 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
         }
     }
 
-    const [product] = await db.insert(productsTable).values({ ...productInsertData, slug }).returning();
+    const initialSellPrice = variants && variants.length > 0
+        ? Math.min(...variants.map((v) => Number(v.sellPrice)))
+        : (data.sellPrice ?? 0);
+    const initialStock = variants && variants.length > 0 && productInsertData.inventoryType === "discrete"
+        ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+        : (data.stock ?? 0);
+
+    const [product] = await db.insert(productsTable).values({
+        ...productInsertData,
+        sellPrice: initialSellPrice,
+        stock: initialStock,
+        slug,
+    }).returning();
 
     if (categoryIds && categoryIds.length > 0) {
         await db.insert(productCategoriesTable).values(
@@ -635,15 +682,44 @@ const createProduct = async (data: TCreateProductOutput): Promise<TProductModel>
                 optionValues: v.optionValues ?? {},
                 signature,
                 inventoryType: variantInvType,
-                purchasePrice: v.purchasePrice,
+                purchasePrice: v.purchasePrice ?? 0,
                 sellPrice: v.sellPrice,
                 stock: v.stock ?? 0,
+                weight: v.weight ?? product.weight ?? null,
+                weightUnit: v.weightUnit ?? product.baseWeightUnit ?? null,
                 poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
                 isDefault,
                 isActive: v.isActive ?? true,
                 imageUrl: v.imageUrl ?? null,
             });
         }
+        await syncProductAggregateReadModel(db, product.id);
+    } else {
+        // Enforce canonical purchasable entity: auto-create default variant for simple products
+        let defaultSku = `${product.slug}-default`.toLowerCase();
+        let counter = 1;
+        while (await db.query.productVariantsTable.findFirst({ where: (v, { eq }) => eq(v.sku, defaultSku) })) {
+            defaultSku = `${product.slug}-default-${counter}`.toLowerCase();
+            counter++;
+        }
+
+        await db.insert(productVariantsTable).values({
+            productId: product.id,
+            title: "Default",
+            sku: defaultSku,
+            optionValues: {},
+            signature: "default",
+            inventoryType: product.inventoryType ?? "discrete",
+            purchasePrice: purchasePrice ?? 0,
+            sellPrice: product.sellPrice,
+            stock: product.stock ?? 0,
+            weight: product.weight != null ? product.weight : null,
+            weightUnit: product.baseWeightUnit ?? null,
+            poolConsumptionRate: null,
+            isDefault: true,
+            isActive: true,
+            imageUrl: product.featuredImageUrl ?? null,
+        });
     }
 
     return product;
@@ -732,7 +808,7 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
             updateData = { ...updateData, slug: newSlug };
         }
 
-        const { categoryIds, primaryCategoryId, options, variants, ...productUpdateData } = updateData;
+        const { purchasePrice, categoryIds, primaryCategoryId, options, variants, ...productUpdateData } = updateData;
 
         if (categoryIds !== undefined) {
             await db.delete(productCategoriesTable).where(eq(productCategoriesTable.productId, existingProduct.id));
@@ -795,15 +871,94 @@ const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProductOutpu
                         optionValues: v.optionValues ?? {},
                         signature,
                         inventoryType: variantInvType,
-                        purchasePrice: v.purchasePrice,
+                        purchasePrice: v.purchasePrice ?? 0,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,
+                        weight: v.weight ?? null,
+                        weightUnit: v.weightUnit ?? null,
                         poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
                         isDefault,
                         isActive: v.isActive ?? true,
                         imageUrl: v.imageUrl ?? null,
                     });
                 }
+                await syncProductAggregateReadModel(db, existingProduct.id);
+            } else {
+                // Variants array explicitly cleared: re-create default variant for simple product
+                const targetSlug = updateData.slug ?? existingProduct.slug;
+                let defaultSku = `${targetSlug}-default`.toLowerCase();
+                let counter = 1;
+                while (await db.query.productVariantsTable.findFirst({ where: (v, { eq }) => eq(v.sku, defaultSku) })) {
+                    defaultSku = `${targetSlug}-default-${counter}`.toLowerCase();
+                    counter++;
+                }
+
+                await db.insert(productVariantsTable).values({
+                    productId: existingProduct.id,
+                    title: "Default",
+                    sku: defaultSku,
+                    optionValues: {},
+                    signature: "default",
+                    inventoryType: updateData.inventoryType ?? existingProduct.inventoryType ?? "discrete",
+                    purchasePrice: purchasePrice ?? 0,
+                    sellPrice: updateData.sellPrice ?? existingProduct.sellPrice,
+                    stock: updateData.stock ?? existingProduct.stock ?? 0,
+                    poolConsumptionRate: null,
+                    isDefault: true,
+                    isActive: true,
+                    imageUrl: updateData.featuredImageUrl ?? existingProduct.featuredImageUrl ?? null,
+                });
+            }
+        } else {
+            // variants undefined -> sync product-level updates to simple product default variant if present
+            const existingVariants = await db.query.productVariantsTable.findMany({
+                where: (v, { eq }) => eq(v.productId, existingProduct.id),
+            });
+
+            if (existingVariants.length === 1) {
+                const singleVar = existingVariants[0];
+                const isDefaultSimple = singleVar.isDefault && (!singleVar.optionValues || Object.keys(singleVar.optionValues).length === 0);
+                if (isDefaultSimple) {
+                    const variantSyncData: Record<string, unknown> = {};
+                    if (updateData.sellPrice !== undefined) variantSyncData.sellPrice = updateData.sellPrice;
+                    if (purchasePrice !== undefined) variantSyncData.purchasePrice = purchasePrice;
+                    if (updateData.stock !== undefined) variantSyncData.stock = updateData.stock;
+                    if (updateData.inventoryType !== undefined) variantSyncData.inventoryType = updateData.inventoryType;
+                    if (updateData.featuredImageUrl !== undefined) variantSyncData.imageUrl = updateData.featuredImageUrl;
+                    if (updateData.weight !== undefined) variantSyncData.weight = updateData.weight;
+                    if (updateData.baseWeightUnit !== undefined) variantSyncData.weightUnit = updateData.baseWeightUnit;
+
+                    if (Object.keys(variantSyncData).length > 0) {
+                        await db.update(productVariantsTable)
+                            .set(variantSyncData)
+                            .where(eq(productVariantsTable.id, singleVar.id));
+                    }
+                }
+            } else if (existingVariants.length === 0) {
+                // In case a simple product has no variants, create default variant
+                const targetSlug = updateData.slug ?? existingProduct.slug;
+                let defaultSku = `${targetSlug}-default`.toLowerCase();
+                let counter = 1;
+                while (await db.query.productVariantsTable.findFirst({ where: (v, { eq }) => eq(v.sku, defaultSku) })) {
+                    defaultSku = `${targetSlug}-default-${counter}`.toLowerCase();
+                    counter++;
+                }
+
+                await db.insert(productVariantsTable).values({
+                    productId: existingProduct.id,
+                    title: "Default",
+                    sku: defaultSku,
+                    optionValues: {},
+                    signature: "default",
+                    inventoryType: updateData.inventoryType ?? existingProduct.inventoryType ?? "discrete",
+                    purchasePrice: purchasePrice ?? 0,
+                    sellPrice: updateData.sellPrice ?? existingProduct.sellPrice,
+                    stock: updateData.stock ?? existingProduct.stock ?? 0,
+                    poolConsumptionRate: null,
+                    isDefault: true,
+                    isActive: true,
+                    imageUrl: updateData.featuredImageUrl ?? existingProduct.featuredImageUrl ?? null,
+                });
             }
         }
 
@@ -1087,8 +1242,7 @@ const getRelatedProducts = async (slug: TProductSlug, limit: number = 8): Promis
     const relatedProducts = await db.query.productsTable.findMany({
         where: (product, { inArray }) => inArray(product.id, candidateIds),
         columns: {
-            purchasePrice: false,
-            updatedAt: false,
+                        updatedAt: false,
             deletedAt: false,
             searchVector: false,
         },
@@ -1148,18 +1302,29 @@ const addVariantToProduct = async (
         throw new ConflictError(`A variant with option signature '${signature}' already exists for this product`);
     }
 
+    const existingVariants = await db.query.productVariantsTable.findMany({
+        where: (v, { eq }) => eq(v.productId, product.id),
+    });
+
+    const isOnlyDefaultDummy = existingVariants.length === 1 &&
+        existingVariants[0].isDefault &&
+        (!existingVariants[0].optionValues || Object.keys(existingVariants[0].optionValues).length === 0);
+
+    const hasNewOptionValues = parsed.optionValues && Object.keys(parsed.optionValues).length > 0;
+
     let isDefault = parsed.isDefault;
-    if (isDefault) {
+    if (isOnlyDefaultDummy && hasNewOptionValues) {
+        // Upgrade from simple to variable product by replacing placeholder default variant
+        await db.delete(productVariantsTable).where(eq(productVariantsTable.id, existingVariants[0].id));
+        isDefault = true;
+    } else if (isDefault) {
         await db
             .update(productVariantsTable)
             .set({ isDefault: false })
             .where(eq(productVariantsTable.productId, product.id));
     } else {
-        const existingCount = await db.$count(
-            productVariantsTable,
-            eq(productVariantsTable.productId, product.id)
-        );
-        if (existingCount === 0) {
+        const remainingCount = existingVariants.length;
+        if (remainingCount === 0) {
             isDefault = true;
         }
     }
@@ -1179,11 +1344,15 @@ const addVariantToProduct = async (
             sellPrice: parsed.sellPrice,
             stock: parsed.stock ?? 0,
             poolConsumptionRate: parsed.poolConsumptionRate != null ? parsed.poolConsumptionRate : null,
+            weight: parsed.weight != null ? parsed.weight : null,
+            weightUnit: parsed.weightUnit ?? null,
             isDefault,
             isActive: parsed.isActive ?? true,
             imageUrl: parsed.imageUrl ?? null,
         })
         .returning();
+
+    await syncProductAggregateReadModel(db, product.id);
 
     const computedStock = calculateVariantStock({
         masterStock: Number(product.stock),
@@ -1269,6 +1438,8 @@ const updateVariant = async (
         .where(eq(productVariantsTable.id, variantId))
         .returning();
 
+    await syncProductAggregateReadModel(db, product.id);
+
     const variantInvType = updated.inventoryType ?? product.inventoryType ?? "discrete";
 
     const computedStock = calculateVariantStock({
@@ -1309,11 +1480,21 @@ const deleteVariant = async (
         throw new NotFoundError("Variant not found on this product");
     }
 
-    await db.delete(productVariantsTable).where(eq(productVariantsTable.id, variantId));
+    const totalVariantCount = await db.$count(
+        productVariantsTable,
+        and(eq(productVariantsTable.productId, product.id), isNull(productVariantsTable.deletedAt))
+    );
+    if (totalVariantCount <= 1) {
+        throw new BadRequestError("Cannot delete the only variant of a product. A product must have at least one variant.");
+    }
+
+    await db.update(productVariantsTable)
+        .set({ deletedAt: new Date(), isActive: false, isDefault: false })
+        .where(eq(productVariantsTable.id, variantId));
 
     if (existingVariant.isDefault) {
         const nextVariant = await db.query.productVariantsTable.findFirst({
-            where: (v, { eq }) => eq(v.productId, product.id),
+            where: (v, { eq, and, isNull }) => and(eq(v.productId, product.id), isNull(v.deletedAt)),
             orderBy: (v, { asc }) => [asc(v.createdAt)],
         });
         if (nextVariant) {
@@ -1323,6 +1504,8 @@ const deleteVariant = async (
                 .where(eq(productVariantsTable.id, nextVariant.id));
         }
     }
+
+    await syncProductAggregateReadModel(db, product.id);
 };
 
 const createProductOption = async (
@@ -1592,7 +1775,7 @@ const generateVariantMatrix = async (
     const permutations = generateCartesianPermutations(product.slug, parsed.options, parsed.skuPrefix);
 
     const defaultSell = parsed.defaultSellPrice ?? Number(product.sellPrice);
-    const defaultPurchase = parsed.defaultPurchasePrice ?? Number(product.purchasePrice);
+    const defaultPurchase = parsed.defaultPurchasePrice ?? 0;
     const defaultStock = parsed.defaultStock ?? Number(product.stock);
     const defaultInvType = parsed.defaultInventoryType ?? product.inventoryType ?? "discrete";
 
@@ -1647,7 +1830,19 @@ const generateVariantMatrix = async (
             }
         }
 
-        const existingDefault = await tx.query.productVariantsTable.findFirst({
+        const existingVariants = await tx.query.productVariantsTable.findMany({
+            where: (v, { eq }) => eq(v.productId, product.id),
+        });
+
+        const isOnlyDefaultDummy = existingVariants.length === 1 &&
+            existingVariants[0].isDefault &&
+            (!existingVariants[0].optionValues || Object.keys(existingVariants[0].optionValues).length === 0);
+
+        if (isOnlyDefaultDummy) {
+            await tx.delete(productVariantsTable).where(eq(productVariantsTable.id, existingVariants[0].id));
+        }
+
+        const existingDefault = isOnlyDefaultDummy ? null : await tx.query.productVariantsTable.findFirst({
             where: (v, { eq, and }) => and(eq(v.productId, product.id), eq(v.isDefault, true)),
         });
 
@@ -1689,6 +1884,7 @@ const generateVariantMatrix = async (
             insertedVariants.push(newVar);
         }
 
+        await syncProductAggregateReadModel(tx, product.id);
         return insertedVariants;
     });
 
@@ -1726,6 +1922,7 @@ const productsActions = {
     updateOptionValue,
     deleteOptionValue,
     generateVariantMatrix,
+    syncProductAggregateReadModel,
 };
 
 export default productsActions;
