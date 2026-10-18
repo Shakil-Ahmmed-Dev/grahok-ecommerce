@@ -141,6 +141,13 @@
       "when": 1792307458736,
       "tag": "0019_sparkling_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792314846784,
+      "tag": "0020_lean_thanos",
+      "breakpoints": true
     }
   ]
 }

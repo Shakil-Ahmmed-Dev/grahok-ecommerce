@@ -80,6 +80,12 @@ import {
 import { ensureSlug, slugify } from "@/lib/slug";
 import { calculateVariantStock, resolveEffectiveInventoryType, resolveEffectiveAllowBackorder, reserveVariantInventory, releaseVariantInventory, reserveCartInventory } from "./inventory";
 import { generateCartesianPermutations, normalizeVariantSignature } from "./matrix";
+import {
+    calculateConsignmentLogistics,
+    calculateVolumetricWeight,
+    calculateChargeableWeight,
+    resolveEffectiveLogistics,
+} from "./logistics";
 import z from "zod";
 
 const buildPaginationMeta = (
@@ -107,6 +113,10 @@ function mapProductCategories<T extends {
     stock?: string | number;
     poolStock?: string | number;
     inventoryType?: string;
+    weight?: string | number | null;
+    packageLength?: string | number | null;
+    packageWidth?: string | number | null;
+    packageHeight?: string | number | null;
     productCategories?: Array<{ isPrimary: boolean; category: { id: string; name: string; slug: string } }>;
     options?: Array<{
         id: string;
@@ -134,6 +144,10 @@ function mapProductCategories<T extends {
         sellPrice: string | number;
         stock?: string | number | null;
         poolConsumptionRate?: string | number | null;
+        weight?: string | number | null;
+        packageLength?: string | number | null;
+        packageWidth?: string | number | null;
+        packageHeight?: string | number | null;
         isDefault: boolean;
         isActive: boolean;
         imageUrl: string | null;
@@ -149,6 +163,10 @@ function mapProductCategories<T extends {
         ...rest,
         stock: Number(product.stock ?? 0),
         poolStock: Number(product.poolStock ?? 0),
+        weight: product.weight != null ? Number(product.weight) : null,
+        packageLength: product.packageLength != null ? Number(product.packageLength) : null,
+        packageWidth: product.packageWidth != null ? Number(product.packageWidth) : null,
+        packageHeight: product.packageHeight != null ? Number(product.packageHeight) : null,
         categories: (productCategories ?? []).map((pc) => ({
             id: pc.category.id,
             name: pc.category.name,
@@ -190,6 +208,10 @@ function mapProductCategories<T extends {
                 sellPrice: Number(v.sellPrice),
                 stock: stockResult.stock,
                 isUnlimited: stockResult.isUnlimited,
+                weight: v.weight != null ? Number(v.weight) : null,
+                packageLength: v.packageLength != null ? Number(v.packageLength) : null,
+                packageWidth: v.packageWidth != null ? Number(v.packageWidth) : null,
+                packageHeight: v.packageHeight != null ? Number(v.packageHeight) : null,
                 ...(v.poolConsumptionRate != null ? { poolConsumptionRate: Number(v.poolConsumptionRate) } : {}),
                 ...(v.purchasePrice !== undefined ? { purchasePrice: Number(v.purchasePrice) } : {}),
             };
@@ -885,6 +907,10 @@ export const createProduct = async (data: TCreateProductOutput): Promise<TProduc
                 sellPrice: v.sellPrice,
                 stock: v.stock ?? 0,
                 poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
+                weight: v.weight ?? null,
+                packageLength: v.packageLength ?? null,
+                packageWidth: v.packageWidth ?? null,
+                packageHeight: v.packageHeight ?? null,
                 isDefault,
                 isActive: v.isActive ?? true,
                 imageUrl: v.imageUrl ?? null,
@@ -911,6 +937,10 @@ export const createProduct = async (data: TCreateProductOutput): Promise<TProduc
             sellPrice: product.sellPrice,
             stock: product.stock ?? 0,
             poolConsumptionRate: null,
+            weight: product.weight != null ? Number(product.weight) : null,
+            packageLength: product.packageLength != null ? Number(product.packageLength) : null,
+            packageWidth: product.packageWidth != null ? Number(product.packageWidth) : null,
+            packageHeight: product.packageHeight != null ? Number(product.packageHeight) : null,
             isDefault: true,
             isActive: true,
             imageUrl: product.featuredImageUrl ?? null,
@@ -1063,10 +1093,15 @@ export const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProdu
                         optionValues: v.optionValues ?? {},
                         signature,
                         inventoryType: v.inventoryType ?? null,
+                        allowBackorder: v.allowBackorder ?? null,
                         purchasePrice: v.purchasePrice ?? 0,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,
                         poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
+                        weight: v.weight ?? null,
+                        packageLength: v.packageLength ?? null,
+                        packageWidth: v.packageWidth ?? null,
+                        packageHeight: v.packageHeight ?? null,
                         isDefault,
                         isActive: v.isActive ?? true,
                         imageUrl: v.imageUrl ?? null,
@@ -1093,6 +1128,10 @@ export const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProdu
                     sellPrice: updateData.sellPrice ?? existingProduct.sellPrice,
                     stock: updateData.stock ?? existingProduct.stock ?? 0,
                     poolConsumptionRate: null,
+                    weight: productUpdateData.weight !== undefined ? productUpdateData.weight : (existingProduct.weight ?? null),
+                    packageLength: productUpdateData.packageLength !== undefined ? productUpdateData.packageLength : (existingProduct.packageLength ?? null),
+                    packageWidth: productUpdateData.packageWidth !== undefined ? productUpdateData.packageWidth : (existingProduct.packageWidth ?? null),
+                    packageHeight: productUpdateData.packageHeight !== undefined ? productUpdateData.packageHeight : (existingProduct.packageHeight ?? null),
                     isDefault: true,
                     isActive: true,
                     imageUrl: updateData.featuredImageUrl ?? existingProduct.featuredImageUrl ?? null,
@@ -1113,6 +1152,10 @@ export const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProdu
                     if (updateData.stock !== undefined) variantSyncData.stock = updateData.stock;
                     if (updateData.inventoryType !== undefined) variantSyncData.inventoryType = updateData.inventoryType;
                     if (updateData.featuredImageUrl !== undefined) variantSyncData.imageUrl = updateData.featuredImageUrl;
+                    if (productUpdateData.weight !== undefined) variantSyncData.weight = productUpdateData.weight;
+                    if (productUpdateData.packageLength !== undefined) variantSyncData.packageLength = productUpdateData.packageLength;
+                    if (productUpdateData.packageWidth !== undefined) variantSyncData.packageWidth = productUpdateData.packageWidth;
+                    if (productUpdateData.packageHeight !== undefined) variantSyncData.packageHeight = productUpdateData.packageHeight;
 
                     if (Object.keys(variantSyncData).length > 0) {
                         await db.update(productVariantsTable)
@@ -1140,6 +1183,10 @@ export const updateProductBySlug = async (slug: TProductSlug, data: TUpdateProdu
                     sellPrice: updateData.sellPrice ?? existingProduct.sellPrice,
                     stock: updateData.stock ?? existingProduct.stock ?? 0,
                     poolConsumptionRate: null,
+                    weight: productUpdateData.weight !== undefined ? productUpdateData.weight : (existingProduct.weight ?? null),
+                    packageLength: productUpdateData.packageLength !== undefined ? productUpdateData.packageLength : (existingProduct.packageLength ?? null),
+                    packageWidth: productUpdateData.packageWidth !== undefined ? productUpdateData.packageWidth : (existingProduct.packageWidth ?? null),
+                    packageHeight: productUpdateData.packageHeight !== undefined ? productUpdateData.packageHeight : (existingProduct.packageHeight ?? null),
                     isDefault: true,
                     isActive: true,
                     imageUrl: updateData.featuredImageUrl ?? existingProduct.featuredImageUrl ?? null,
@@ -1525,6 +1572,10 @@ export const addVariantToProduct = async (
             sellPrice: parsed.sellPrice,
             stock: parsed.stock ?? 0,
             poolConsumptionRate: parsed.poolConsumptionRate != null ? parsed.poolConsumptionRate : null,
+            weight: parsed.weight ?? null,
+            packageLength: parsed.packageLength ?? null,
+            packageWidth: parsed.packageWidth ?? null,
+            packageHeight: parsed.packageHeight ?? null,
             isDefault,
             isActive: parsed.isActive ?? true,
             imageUrl: parsed.imageUrl ?? null,
@@ -1550,6 +1601,10 @@ export const addVariantToProduct = async (
         sellPrice: Number(variant.sellPrice),
         stock: stockCalc.stock,
         isUnlimited: stockCalc.isUnlimited,
+        weight: variant.weight != null ? Number(variant.weight) : null,
+        packageLength: variant.packageLength != null ? Number(variant.packageLength) : null,
+        packageWidth: variant.packageWidth != null ? Number(variant.packageWidth) : null,
+        packageHeight: variant.packageHeight != null ? Number(variant.packageHeight) : null,
         ...(variant.poolConsumptionRate != null ? { poolConsumptionRate: Number(variant.poolConsumptionRate) } : {}),
     });
 };
@@ -1638,6 +1693,10 @@ export const updateVariant = async (
         sellPrice: Number(updated.sellPrice),
         stock: stockCalc.stock,
         isUnlimited: stockCalc.isUnlimited,
+        weight: updated.weight != null ? Number(updated.weight) : null,
+        packageLength: updated.packageLength != null ? Number(updated.packageLength) : null,
+        packageWidth: updated.packageWidth != null ? Number(updated.packageWidth) : null,
+        packageHeight: updated.packageHeight != null ? Number(updated.packageHeight) : null,
         ...(updated.poolConsumptionRate != null ? { poolConsumptionRate: Number(updated.poolConsumptionRate) } : {}),
     });
 };
@@ -1751,6 +1810,21 @@ export const getVariantCheckoutSnapshots = async (
             continue;
         }
 
+        const logistics = resolveEffectiveLogistics(
+            {
+                weight: variant.weight != null ? Number(variant.weight) : null,
+                packageLength: variant.packageLength != null ? Number(variant.packageLength) : null,
+                packageWidth: variant.packageWidth != null ? Number(variant.packageWidth) : null,
+                packageHeight: variant.packageHeight != null ? Number(variant.packageHeight) : null,
+            },
+            {
+                weight: product.weight != null ? Number(product.weight) : null,
+                packageLength: product.packageLength != null ? Number(product.packageLength) : null,
+                packageWidth: product.packageWidth != null ? Number(product.packageWidth) : null,
+                packageHeight: product.packageHeight != null ? Number(product.packageHeight) : null,
+            }
+        );
+
         const snapshot = VariantCheckoutSnapshotSchema.parse({
             productId: product.id,
             variantId: variant.id,
@@ -1761,7 +1835,12 @@ export const getVariantCheckoutSnapshots = async (
             imageUrl: variant.imageUrl ?? product.featuredImageUrl ?? null,
             currentPrice: Number(variant.sellPrice),
             purchasePrice: Number(variant.purchasePrice),
-            weight: null,
+            weight: logistics.weight,
+            packageLength: logistics.packageLength,
+            packageWidth: logistics.packageWidth,
+            packageHeight: logistics.packageHeight,
+            volumetricWeight: logistics.volumetricWeight,
+            chargeableWeight: logistics.chargeableWeight,
             inventoryType: effectiveInventoryType,
             allowBackorder: effectiveAllowBackorder,
             availableStock: stockCalc.stock,
@@ -1787,6 +1866,10 @@ export {
     reserveVariantInventory,
     releaseVariantInventory,
     reserveCartInventory,
+    resolveEffectiveLogistics,
+    calculateConsignmentLogistics,
+    calculateVolumetricWeight,
+    calculateChargeableWeight,
 };
 
 export const getVariantCheckoutSnapshot = async (
@@ -2080,6 +2163,10 @@ export const generateVariantMatrix = async (
     const defaultPurchase = parsed.defaultPurchasePrice ?? 0;
     const defaultStock = parsed.defaultStock ?? Number(product.stock);
     const defaultInvType = parsed.defaultInventoryType ?? product.inventoryType ?? "discrete";
+    const defaultWeight = parsed.defaultWeight !== undefined ? parsed.defaultWeight : (product.weight ? Number(product.weight) : null);
+    const defaultPackageLength = parsed.defaultPackageLength !== undefined ? parsed.defaultPackageLength : (product.packageLength ? Number(product.packageLength) : null);
+    const defaultPackageWidth = parsed.defaultPackageWidth !== undefined ? parsed.defaultPackageWidth : (product.packageWidth ? Number(product.packageWidth) : null);
+    const defaultPackageHeight = parsed.defaultPackageHeight !== undefined ? parsed.defaultPackageHeight : (product.packageHeight ? Number(product.packageHeight) : null);
 
     if (parsed.preview) {
         return {
@@ -2095,6 +2182,10 @@ export const generateVariantMatrix = async (
                 stock: defaultStock,
                 inventoryType: defaultInvType,
                 poolConsumptionRate: perm.poolConsumptionRate ?? parsed.defaultPoolConsumptionRate ?? null,
+                weight: defaultWeight,
+                packageLength: defaultPackageLength,
+                packageWidth: defaultPackageWidth,
+                packageHeight: defaultPackageHeight,
                 isDefault: idx === 0,
             })),
         };
@@ -2182,6 +2273,10 @@ export const generateVariantMatrix = async (
                 purchasePrice: defaultPurchase,
                 stock: defaultStock,
                 poolConsumptionRate: perm.poolConsumptionRate ?? parsed.defaultPoolConsumptionRate ?? null,
+                weight: defaultWeight,
+                packageLength: defaultPackageLength,
+                packageWidth: defaultPackageWidth,
+                packageHeight: defaultPackageHeight,
                 isDefault,
                 isActive: true,
             }).returning();
@@ -2202,6 +2297,10 @@ export const generateVariantMatrix = async (
             purchasePrice: Number(v.purchasePrice),
             stock: Number(v.stock),
             poolConsumptionRate: v.poolConsumptionRate != null ? Number(v.poolConsumptionRate) : null,
+            weight: v.weight != null ? Number(v.weight) : null,
+            packageLength: v.packageLength != null ? Number(v.packageLength) : null,
+            packageWidth: v.packageWidth != null ? Number(v.packageWidth) : null,
+            packageHeight: v.packageHeight != null ? Number(v.packageHeight) : null,
         })),
     };
 };

@@ -149,6 +149,31 @@ export const UpdateProductOptionSchema = z.object({
 });
 export type TUpdateProductOptionInput = z.infer<typeof UpdateProductOptionSchema>;
 
+export const validateDimensionsRefinement = (data: {
+    packageLength?: number | null;
+    packageWidth?: number | null;
+    packageHeight?: number | null;
+}) => {
+    const hasL = data.packageLength != null;
+    const hasW = data.packageWidth != null;
+    const hasH = data.packageHeight != null;
+    if (hasL || hasW || hasH) {
+        return hasL && hasW && hasH;
+    }
+    return true;
+};
+
+export const LogisticsMetricsInputSchema = z.object({
+    weight: z.coerce.number().positive("Weight must be greater than 0").nullable().optional(),
+    packageLength: z.coerce.number().positive("Package length must be greater than 0").nullable().optional(),
+    packageWidth: z.coerce.number().positive("Package width must be greater than 0").nullable().optional(),
+    packageHeight: z.coerce.number().positive("Package height must be greater than 0").nullable().optional(),
+}).refine(
+    validateDimensionsRefinement,
+    { message: "All package dimensions (length, width, height) must be provided together" }
+);
+export type TLogisticsMetricsInput = z.infer<typeof LogisticsMetricsInputSchema>;
+
 export const GenerateMatrixInputSchema = z.object({
     options: z.array(z.object({
         name: z.string().trim().min(1, "Option name is required"),
@@ -166,7 +191,22 @@ export const GenerateMatrixInputSchema = z.object({
     defaultStock: z.coerce.number().nonnegative().optional(),
     defaultInventoryType: InventoryTypeSchema.nullable().optional(),
     defaultPoolConsumptionRate: z.coerce.number().positive().nullable().optional(),
-});
+    defaultWeight: z.coerce.number().positive("Weight must be greater than 0").nullable().optional(),
+    defaultPackageLength: z.coerce.number().positive("Package length must be greater than 0").nullable().optional(),
+    defaultPackageWidth: z.coerce.number().positive("Package width must be greater than 0").nullable().optional(),
+    defaultPackageHeight: z.coerce.number().positive("Package height must be greater than 0").nullable().optional(),
+}).refine(
+    (data) => {
+        const hasL = data.defaultPackageLength != null;
+        const hasW = data.defaultPackageWidth != null;
+        const hasH = data.defaultPackageHeight != null;
+        if (hasL || hasW || hasH) {
+            return hasL && hasW && hasH;
+        }
+        return true;
+    },
+    { message: "All default package dimensions (length, width, height) must be provided together" }
+);
 export type TGenerateMatrixInput = z.infer<typeof GenerateMatrixInputSchema>;
 
 export const OptionValuesMapSchema = z.record(z.string(), z.string());
@@ -191,6 +231,10 @@ export const ProductVariantPublicSchema = z.object({
     stock: z.number().nullable(),
     isUnlimited: z.boolean().default(false),
     poolConsumptionRate: z.number().nullable().optional(),
+    weight: z.number().nullable().optional(),
+    packageLength: z.number().nullable().optional(),
+    packageWidth: z.number().nullable().optional(),
+    packageHeight: z.number().nullable().optional(),
     isDefault: z.boolean(),
     isActive: z.boolean(),
     imageUrl: z.string().nullable().optional(),
@@ -205,7 +249,7 @@ export const ProductVariantSchema = ProductVariantPublicSchema.extend({
 });
 export type TProductVariant = z.infer<typeof ProductVariantSchema>;
 
-export const CreateProductVariantSchema = z.object({
+export const BaseCreateProductVariantSchema = z.object({
     title: z.string().trim().min(1).optional(),
     sku: z.string().trim().min(1, "SKU cannot be empty").optional(),
     optionValues: OptionValuesMapSchema.default({}),
@@ -216,14 +260,26 @@ export const CreateProductVariantSchema = z.object({
     sellPrice: z.coerce.number().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number().nonnegative("Stock must be a non-negative number").default(0),
     poolConsumptionRate: z.coerce.number().positive("Pool consumption rate must be greater than 0").nullable().optional(),
+    weight: z.coerce.number().positive("Weight must be greater than 0").nullable().optional(),
+    packageLength: z.coerce.number().positive("Package length must be greater than 0").nullable().optional(),
+    packageWidth: z.coerce.number().positive("Package width must be greater than 0").nullable().optional(),
+    packageHeight: z.coerce.number().positive("Package height must be greater than 0").nullable().optional(),
     isDefault: z.boolean().default(false),
     isActive: z.boolean().default(true),
     imageUrl: z.url("Image URL must be a valid URL").trim().nullable().optional(),
 });
+
+export const CreateProductVariantSchema = BaseCreateProductVariantSchema.refine(
+    validateDimensionsRefinement,
+    { message: "All package dimensions (length, width, height) must be provided together" }
+);
 export type TCreateProductVariantInput = z.input<typeof CreateProductVariantSchema>;
 export type TCreateProductVariantOutput = z.output<typeof CreateProductVariantSchema>;
 
-export const UpdateProductVariantSchema = CreateProductVariantSchema.partial();
+export const UpdateProductVariantSchema = BaseCreateProductVariantSchema.partial().refine(
+    validateDimensionsRefinement,
+    { message: "All package dimensions (length, width, height) must be provided together" }
+);
 export type TUpdateProductVariantInput = z.input<typeof UpdateProductVariantSchema>;
 export type TUpdateProductVariantOutput = z.output<typeof UpdateProductVariantSchema>;
 
@@ -240,6 +296,11 @@ export const VariantCheckoutSnapshotSchema = z.object({
     currentPrice: z.number(),
     purchasePrice: z.number(),
     weight: z.number().nullable().optional(),
+    packageLength: z.number().nullable().optional(),
+    packageWidth: z.number().nullable().optional(),
+    packageHeight: z.number().nullable().optional(),
+    volumetricWeight: z.number().nullable().optional(),
+    chargeableWeight: z.number().nullable().optional(),
     inventoryType: InventoryTypeSchema,
     allowBackorder: z.boolean().default(false),
     availableStock: z.number().nullable(),
@@ -269,6 +330,10 @@ export const ProductModelSchema = createSelectSchema(productsTable, {
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
     allowBackorder: z.boolean().default(false).optional(),
     poolStock: z.coerce.number().nonnegative().default(0),
+    weight: z.number().nullable().optional(),
+    packageLength: z.number().nullable().optional(),
+    packageWidth: z.number().nullable().optional(),
+    packageHeight: z.number().nullable().optional(),
 });
 export type TProductModel = z.infer<typeof ProductModelSchema>;
 
@@ -369,7 +434,7 @@ export const AdminProductsListSchema = z.object({
 });
 export type TAdminProductsList = z.infer<typeof AdminProductsListSchema>;
 
-export const CreateProductSchema = createInsertSchema(productsTable, {
+export const BaseCreateProductSchema = createInsertSchema(productsTable, {
     name: z.string()
         .trim()
         .min(1, "Product name is required"),
@@ -386,6 +451,10 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     poolStock: z.coerce.number<string>().nonnegative("Pool stock must be a non-negative number").default(0).optional(),
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
     allowBackorder: z.boolean().default(false).optional(),
+    weight: z.coerce.number().positive("Weight must be greater than 0").nullable().optional(),
+    packageLength: z.coerce.number().positive("Package length must be greater than 0").nullable().optional(),
+    packageWidth: z.coerce.number().positive("Package width must be greater than 0").nullable().optional(),
+    packageHeight: z.coerce.number().positive("Package height must be greater than 0").nullable().optional(),
     status: ProductStatusSchema.default(ProductStatusSchema.enum.draft),
     publishedAt: z.coerce.date().optional().nullable(),
 }).extend({
@@ -395,11 +464,19 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     options: z.array(CreateProductOptionSchema).optional(),
     variants: z.array(CreateProductVariantSchema).optional(),
 }).omit({ deletedAt: true });
+
+export const CreateProductSchema = BaseCreateProductSchema.refine(
+    validateDimensionsRefinement,
+    { message: "All package dimensions (length, width, height) must be provided together" }
+);
 export type TCreateProductInput = z.input<typeof CreateProductSchema>;
 export type TCreateProductOutput = z.output<typeof CreateProductSchema>;
 
 export const UpdateProductSchema = z.object({
-    data: CreateProductSchema.partial(),
+    data: BaseCreateProductSchema.partial().refine(
+        validateDimensionsRefinement,
+        { message: "All package dimensions (length, width, height) must be provided together" }
+    ),
 });
 export type TUpdateProductInput = z.input<typeof UpdateProductSchema>;
 export type TUpdateProductOutput = z.output<typeof UpdateProductSchema>;
@@ -480,3 +557,5 @@ export const RelatedProductsQuerySchema = z.object({
     limit: z.coerce.number<string>().int().positive("Limit must be positive").max(20, "Limit cannot exceed 20").default(8),
 });
 export type TRelatedProductsQuery = z.infer<typeof RelatedProductsQuerySchema>;
+
+export * from "./logistics";
