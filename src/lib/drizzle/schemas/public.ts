@@ -103,6 +103,7 @@ export const productsTable = pgTable("products", {
         mode: "number",
     }).notNull().default(0),
     inventoryType: inventoryTypeEnum("inventory_type").notNull().default("discrete"),
+    allowBackorder: boolean("allow_backorder").notNull().default(false),
     status: productStatusEnum().notNull().default(PRODUCT_STATUSES[0]),
     publishedAt: timestamp(),
     createdAt: timestamp().defaultNow().notNull(),
@@ -199,6 +200,7 @@ export const productVariantsTable = pgTable("product_variants", {
     optionValues: jsonb("option_values").$type<Record<string, string>>().notNull().default({}),
     signature: text().notNull(),
     inventoryType: inventoryTypeEnum("inventory_type"),
+    allowBackorder: boolean("allow_backorder"),
     purchasePrice: numeric<"number">({
         scale: 2,
     }).notNull(),

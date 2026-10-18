@@ -186,6 +186,7 @@ export const ProductVariantPublicSchema = z.object({
     optionValues: OptionValuesMapSchema.default({}),
     signature: z.string(),
     inventoryType: InventoryTypeSchema,
+    allowBackorder: z.boolean().default(false),
     sellPrice: z.number(),
     stock: z.number().nullable(),
     isUnlimited: z.boolean().default(false),
@@ -210,6 +211,7 @@ export const CreateProductVariantSchema = z.object({
     optionValues: OptionValuesMapSchema.default({}),
     signature: z.string().trim().optional(),
     inventoryType: InventoryTypeSchema.nullable().optional(),
+    allowBackorder: z.boolean().nullable().optional(),
     purchasePrice: z.coerce.number().nonnegative("Purchase price must be a non-negative number").default(0),
     sellPrice: z.coerce.number().nonnegative("Sell price must be a non-negative number"),
     stock: z.coerce.number().nonnegative("Stock must be a non-negative number").default(0),
@@ -240,6 +242,7 @@ export const VariantCheckoutSnapshotSchema = z.object({
     weight: z.number().nullable().optional(),
     taxRate: z.number().nullable().optional(),
     inventoryType: InventoryTypeSchema,
+    allowBackorder: z.boolean().default(false),
     availableStock: z.number().nullable(),
     isUnlimited: z.boolean(),
     isPurchasable: z.boolean(),
@@ -265,6 +268,7 @@ export type TProductCategoryItem = z.infer<typeof ProductCategoryItemSchema>;
 
 export const ProductModelSchema = createSelectSchema(productsTable, {
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
+    allowBackorder: z.boolean().default(false).optional(),
     poolStock: z.coerce.number().nonnegative().default(0),
 });
 export type TProductModel = z.infer<typeof ProductModelSchema>;
@@ -382,6 +386,7 @@ export const CreateProductSchema = createInsertSchema(productsTable, {
     stock: z.coerce.number<string>().nonnegative("Stock must be a non-negative number").optional(),
     poolStock: z.coerce.number<string>().nonnegative("Pool stock must be a non-negative number").default(0).optional(),
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
+    allowBackorder: z.boolean().default(false).optional(),
     status: ProductStatusSchema.default(ProductStatusSchema.enum.draft),
     publishedAt: z.coerce.date().optional().nullable(),
 }).extend({

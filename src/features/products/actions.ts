@@ -78,7 +78,7 @@ import {
     resolveProductSort,
 } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
-import { calculateVariantStock, resolveEffectiveInventoryType } from "./inventory";
+import { calculateVariantStock, resolveEffectiveInventoryType, resolveEffectiveAllowBackorder, reserveVariantInventory, releaseVariantInventory, reserveCartInventory } from "./inventory";
 import { generateCartesianPermutations, normalizeVariantSignature } from "./matrix";
 import z from "zod";
 
@@ -880,6 +880,7 @@ export const createProduct = async (data: TCreateProductOutput): Promise<TProduc
                 optionValues: v.optionValues ?? {},
                 signature,
                 inventoryType: v.inventoryType ?? null,
+                allowBackorder: v.allowBackorder ?? null,
                 purchasePrice: v.purchasePrice ?? 0,
                 sellPrice: v.sellPrice,
                 stock: v.stock ?? 0,
@@ -905,6 +906,7 @@ export const createProduct = async (data: TCreateProductOutput): Promise<TProduc
             optionValues: {},
             signature: "default",
             inventoryType: product.inventoryType ?? "discrete",
+            allowBackorder: null,
             purchasePrice: purchasePrice ?? 0,
             sellPrice: product.sellPrice,
             stock: product.stock ?? 0,
@@ -1518,6 +1520,7 @@ export const addVariantToProduct = async (
             optionValues: parsed.optionValues ?? {},
             signature,
             inventoryType: parsed.inventoryType ?? null,
+            allowBackorder: parsed.allowBackorder ?? null,
             purchasePrice: parsed.purchasePrice,
             sellPrice: parsed.sellPrice,
             stock: parsed.stock ?? 0,
@@ -1724,6 +1727,7 @@ export const getVariantCheckoutSnapshots = async (
         if (!product) continue;
 
         const effectiveInventoryType = resolveEffectiveInventoryType(variant.inventoryType, product.inventoryType);
+        const effectiveAllowBackorder = resolveEffectiveAllowBackorder(variant.allowBackorder, product.allowBackorder);
 
         const stockCalc = calculateVariantStock({
             masterPoolStock: product.poolStock != null ? Number(product.poolStock) : null,
@@ -1737,7 +1741,9 @@ export const getVariantCheckoutSnapshots = async (
             (product.status === "scheduled" && product.publishedAt !== null && new Date(product.publishedAt) <= now)
         );
         const isVariantLive = !variant.deletedAt && variant.isActive;
-        const hasStock = stockCalc.isUnlimited || (stockCalc.stock !== null && stockCalc.stock >= reqQty);
+        const hasStock = stockCalc.isUnlimited ||
+            effectiveAllowBackorder ||
+            (stockCalc.stock !== null && stockCalc.stock >= reqQty);
 
         const isPurchasable = Boolean(isProductLive && isVariantLive && hasStock);
 
@@ -1758,6 +1764,7 @@ export const getVariantCheckoutSnapshots = async (
             weight: null,
             taxRate: null,
             inventoryType: effectiveInventoryType,
+            allowBackorder: effectiveAllowBackorder,
             availableStock: stockCalc.stock,
             isUnlimited: stockCalc.isUnlimited,
             isPurchasable,
@@ -1776,6 +1783,13 @@ export const getVariantCheckoutSnapshots = async (
  * Resolves a unified checkout snapshot for a single product variant.
  * Provides the single source of truth for downstream Cart, Checkout, Order, and Invoice processing.
  */
+export {
+    resolveEffectiveAllowBackorder,
+    reserveVariantInventory,
+    releaseVariantInventory,
+    reserveCartInventory,
+};
+
 export const getVariantCheckoutSnapshot = async (
     variantId: string,
     options?: {
@@ -2210,6 +2224,10 @@ const productsActions = {
     deleteVariant,
     getVariantCheckoutSnapshot,
     getVariantCheckoutSnapshots,
+    resolveEffectiveAllowBackorder,
+    reserveVariantInventory,
+    releaseVariantInventory,
+    reserveCartInventory,
     createProductOption,
     updateProductOption,
     deleteProductOption,

@@ -134,6 +134,13 @@
       "when": 1792299353129,
       "tag": "0018_ordinary_daredevil",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792307458736,
+      "tag": "0019_sparkling_genesis",
+      "breakpoints": true
     }
   ]
 }
