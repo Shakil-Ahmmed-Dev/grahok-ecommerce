@@ -227,6 +227,33 @@ export type TUpdateProductVariantOutput = z.output<typeof UpdateProductVariantSc
 
 export const VariantIdSchema = z.string().uuid("Invalid variant ID format");
 export type TVariantId = z.infer<typeof VariantIdSchema>;
+export const VariantCheckoutSnapshotSchema = z.object({
+    productId: z.string().uuid(),
+    variantId: z.string().uuid(),
+    sku: z.string(),
+    title: z.string(),
+    variantTitle: z.string(),
+    slug: z.string(),
+    imageUrl: z.string().nullable().optional(),
+    currentPrice: z.number(),
+    purchasePrice: z.number(),
+    weight: z.number().nullable().optional(),
+    taxRate: z.number().nullable().optional(),
+    inventoryType: InventoryTypeSchema,
+    availableStock: z.number().nullable(),
+    isUnlimited: z.boolean(),
+    isPurchasable: z.boolean(),
+    optionValues: OptionValuesMapSchema.default({}),
+    status: ProductStatusSchema,
+    isActive: z.boolean(),
+});
+export type TVariantCheckoutSnapshot = z.infer<typeof VariantCheckoutSnapshotSchema>;
+
+export const VariantCheckoutSnapshotOptionsSchema = z.object({
+    requestedQuantity: z.coerce.number().int().positive().optional(),
+    onlyActive: z.boolean().optional(),
+});
+export type TVariantCheckoutSnapshotOptions = z.infer<typeof VariantCheckoutSnapshotOptionsSchema>;
 
 export const ProductCategoryItemSchema = z.object({
     id: z.string(),

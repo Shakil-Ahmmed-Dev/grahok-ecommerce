@@ -17,6 +17,8 @@ import {
     UpdateProductOptionSchema,
     UpdateProductVariantSchema,
     UpdateVariantTypeSchema,
+    VariantCheckoutSnapshotSchema,
+    VariantIdSchema,
     VariantTypeSchema,
     type TAdminProductQuery,
     type TAdminProductsList,
@@ -45,6 +47,8 @@ import {
     type TUpdateProductOutput,
     type TUpdateProductVariantInput,
     type TUpdateVariantTypeInput,
+    type TVariantCheckoutSnapshot,
+    type TVariantCheckoutSnapshotOptions,
     type TVariantType,
 } from "./types";
 import { BadRequestError, ConflictError, NotFoundError, PermanentRedirectError } from "@/lib/error";
@@ -60,7 +64,7 @@ import {
     variantTypesTable,
     variantTypeValuesTable,
 } from "@/lib/drizzle/schemas/public";
-import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
     buildFuzzyOrderBy,
@@ -1682,6 +1686,114 @@ export const deleteVariant = async (
     await syncProductAggregateReadModel(db, product.id);
 };
 
+/**
+ * Resolves a unified checkout snapshot for multiple product variants.
+ * Ideal for cart and multi-item checkout validation to avoid N+1 database queries.
+ */
+export const getVariantCheckoutSnapshots = async (
+    variantIds: string[],
+    options?: {
+        requestedQuantity?: number;
+        onlyActive?: boolean;
+        executor?: typeof db | any;
+    }
+): Promise<TVariantCheckoutSnapshot[]> => {
+    if (!variantIds || variantIds.length === 0) {
+        return [];
+    }
+
+    const uniqueIds = Array.from(new Set(variantIds));
+    for (const id of uniqueIds) {
+        VariantIdSchema.parse(id);
+    }
+
+    const client = options?.executor ?? db;
+    const variants = await client.query.productVariantsTable.findMany({
+        where: (v: any, { inArray }: any) => inArray(v.id, uniqueIds),
+        with: {
+            product: true,
+        },
+    });
+
+    const now = new Date();
+    const reqQty = options?.requestedQuantity && options.requestedQuantity > 0 ? options.requestedQuantity : 1;
+    const snapshots: TVariantCheckoutSnapshot[] = [];
+
+    for (const variant of variants) {
+        const product = variant.product;
+        if (!product) continue;
+
+        const effectiveInventoryType = resolveEffectiveInventoryType(variant.inventoryType, product.inventoryType);
+
+        const stockCalc = calculateVariantStock({
+            masterPoolStock: product.poolStock != null ? Number(product.poolStock) : null,
+            inventoryType: effectiveInventoryType,
+            variantStock: variant.stock != null ? Number(variant.stock) : null,
+            poolConsumptionRate: variant.poolConsumptionRate != null ? Number(variant.poolConsumptionRate) : null,
+        });
+
+        const isProductLive = !product.deletedAt && (
+            product.status === "published" ||
+            (product.status === "scheduled" && product.publishedAt !== null && new Date(product.publishedAt) <= now)
+        );
+        const isVariantLive = !variant.deletedAt && variant.isActive;
+        const hasStock = stockCalc.isUnlimited || (stockCalc.stock !== null && stockCalc.stock >= reqQty);
+
+        const isPurchasable = Boolean(isProductLive && isVariantLive && hasStock);
+
+        if (options?.onlyActive && !isPurchasable) {
+            continue;
+        }
+
+        const snapshot = VariantCheckoutSnapshotSchema.parse({
+            productId: product.id,
+            variantId: variant.id,
+            sku: variant.sku,
+            title: product.name,
+            variantTitle: variant.title,
+            slug: product.slug,
+            imageUrl: variant.imageUrl ?? product.featuredImageUrl ?? null,
+            currentPrice: Number(variant.sellPrice),
+            purchasePrice: Number(variant.purchasePrice),
+            weight: null,
+            taxRate: null,
+            inventoryType: effectiveInventoryType,
+            availableStock: stockCalc.stock,
+            isUnlimited: stockCalc.isUnlimited,
+            isPurchasable,
+            optionValues: variant.optionValues ?? {},
+            status: product.status,
+            isActive: variant.isActive,
+        });
+
+        snapshots.push(snapshot);
+    }
+
+    return snapshots;
+};
+
+/**
+ * Resolves a unified checkout snapshot for a single product variant.
+ * Provides the single source of truth for downstream Cart, Checkout, Order, and Invoice processing.
+ */
+export const getVariantCheckoutSnapshot = async (
+    variantId: string,
+    options?: {
+        requestedQuantity?: number;
+        onlyActive?: boolean;
+        executor?: typeof db | any;
+    }
+): Promise<TVariantCheckoutSnapshot> => {
+    VariantIdSchema.parse(variantId);
+
+    const snapshots = await getVariantCheckoutSnapshots([variantId], options);
+    if (!snapshots[0]) {
+        throw new NotFoundError(`Variant with id '${variantId}' not found`);
+    }
+
+    return snapshots[0];
+};
+
 export const createProductOption = async (
     productSlug: TProductSlug,
     input: TCreateProductOptionInput
@@ -2096,6 +2208,8 @@ const productsActions = {
     addVariantToProduct,
     updateVariant,
     deleteVariant,
+    getVariantCheckoutSnapshot,
+    getVariantCheckoutSnapshots,
     createProductOption,
     updateProductOption,
     deleteProductOption,
