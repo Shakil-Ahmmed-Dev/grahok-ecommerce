@@ -25,7 +25,12 @@ export const POST = async (request: Request, { params }: RouteParams) => {
             return errorResponse("Too many requests", 429, { retryAfter: rateLimit.retryAfter });
         }
 
-        const customer = await customerActions.getOrCreateCustomer(user.id, user.email, user.name);
+        const customer = await customerActions.getOrCreateCustomer(
+            user.id,
+            user.email,
+            user.name,
+            user.emailVerified
+        );
         const body = await request.json();
         const { type } = SetDefaultPayloadSchema.parse(body);
 

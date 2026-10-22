@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import {
     buildAtomicDefaultAddressSql,
+    buildCustomerIdentityLinkCondition,
 } from "@/features/customers/actions";
+import { POST as anonymizePost } from "@/app/api/v1/customers/me/anonymize/route";
+import { ForbiddenError, NotFoundError } from "@/lib/error";
+import { handleError } from "@/lib/http";
+import {
+    assertCustomerSelfServiceAccess,
+    canCustomerUseSelfService,
+    customerProfileForSelfService,
+    customerIdentityLinkDeniedError,
+    decideCustomerIdentityLink,
+} from "@/features/customers/self-service-policy";
 import {
     CreateCustomerAddressSchema,
     CustomerAdminDetailSchema,
@@ -185,6 +196,139 @@ async function runCustomersTestSuite() {
         billingQuery.sql.includes("SET is_default_billing = (id ="),
         "Billing query uses CASE boolean equality (id = target)"
     );
+
+    // -------------------------------------------------------------
+    // 6. Customer identity linking and self-service authorization
+    // -------------------------------------------------------------
+    console.log("-> 6. Testing Customer identity linking and self-service authorization");
+
+    const identityInput = {
+        authUserId: null,
+        customerStatus: "active",
+        deletedAt: null,
+        requesterAuthUserId: "auth-user-new",
+        emailVerified: true,
+    };
+    assert(
+        decideCustomerIdentityLink({ ...identityInput, emailVerified: false }) === "reject",
+        "Unverified email cannot claim an existing guest customer"
+    );
+    assert(
+        decideCustomerIdentityLink({
+            ...identityInput,
+            authUserId: "auth-user-other",
+        }) === "reject",
+        "A normalized email linked to another auth identity is rejected"
+    );
+    assert(
+        decideCustomerIdentityLink({
+            ...identityInput,
+            deletedAt: new Date(),
+        }) === "reject",
+        "A deleted email match is rejected and not restored"
+    );
+    assert(
+        decideCustomerIdentityLink(identityInput) === "claim",
+        "A verified identity can claim an active unlinked customer"
+    );
+    assert(
+        decideCustomerIdentityLink({
+            ...identityInput,
+            authUserId: "auth-user-new",
+            emailVerified: false,
+        }) === "owned",
+        "An existing auth identity remains owned without rechecking email verification"
+    );
+
+    const linkCondition = dialect.sqlToQuery(
+        buildCustomerIdentityLinkCondition(testCustomerId, "guest@example.com")
+    );
+    const normalizedLinkSql = linkCondition.sql.toLowerCase().replaceAll('"', "");
+    assert(normalizedLinkSql.includes("auth_user_id is null"), "Identity claim only updates an unowned row");
+    assert(normalizedLinkSql.includes("deleted_at is null"), "Identity claim cannot restore deleted customers");
+    assert(normalizedLinkSql.includes("status ="), "Identity claim requires the active status");
+    assert(normalizedLinkSql.includes("lower("), "Identity claim uses the normalized email match");
+
+    const capabilities = ["profileRead", "profileWrite", "addresses", "export"] as const;
+    for (const capability of capabilities) {
+        assert(canCustomerUseSelfService("active", capability), `Active customer can ${capability}`);
+        assert(
+            canCustomerUseSelfService("suspended", capability) === (capability === "profileRead"),
+            `Suspended customer capability ${capability} follows read-only policy`
+        );
+        assert(!canCustomerUseSelfService("archived", capability), `Archived customer cannot ${capability}`);
+        assert(!canCustomerUseSelfService("invalid", capability), `Unknown status cannot ${capability}`);
+    }
+
+    const suspendedProfile = customerProfileForSelfService({
+        status: "suspended",
+        email: "customer@example.com",
+        addresses: [{ addressLine1: "private address" }],
+    });
+    assert(!Object.hasOwn(suspendedProfile, "addresses"), "Suspended profile omits addresses entirely");
+    assert(suspendedProfile.email === "customer@example.com", "Suspended customer can read own profile");
+
+    const activeProfile = customerProfileForSelfService({
+        status: "active",
+        addresses: [{ addressLine1: "active address" }],
+    });
+    assert(Object.hasOwn(activeProfile, "addresses"), "Active profile retains its addresses property");
+
+    const identityDeniedResponse = handleError(customerIdentityLinkDeniedError());
+    const identityDeniedBody = await identityDeniedResponse.json();
+    assert(identityDeniedResponse.status === 404, "Identity claim failures do not disclose matching records");
+    assert(
+        JSON.stringify(identityDeniedBody) === JSON.stringify({
+            success: false,
+            error: {
+                message: "Customer access is unavailable. Use account recovery if needed.",
+            },
+        }),
+        "Identity claim failures use a generic recovery response without customer data"
+    );
+
+    assert.throws(
+        () => assertCustomerSelfServiceAccess("suspended", "addresses"),
+        ForbiddenError,
+        "Suspended customer cannot read or write addresses"
+    );
+    assert.throws(
+        () => assertCustomerSelfServiceAccess("suspended", "export"),
+        ForbiddenError,
+        "Suspended customer cannot export data"
+    );
+    assert.throws(
+        () => assertCustomerSelfServiceAccess("archived", "profileRead"),
+        NotFoundError,
+        "Archived customer access is not disclosed"
+    );
+    assert.throws(
+        () => assertCustomerSelfServiceAccess("invalid", "profileRead"),
+        NotFoundError,
+        "Unknown status is denied by default"
+    );
+
+    const suspendedAddressError = handleError(new ForbiddenError("Customer access is unavailable"));
+    assert(suspendedAddressError.status === 403, "Suspended address access uses 403");
+    assert(
+        JSON.stringify(await suspendedAddressError.json()) ===
+            JSON.stringify({
+                success: false,
+                error: { message: "Customer access is unavailable" },
+            }),
+        "Suspended address denial uses the standard non-PII error response"
+    );
+
+    const anonymizeResponse = await anonymizePost();
+    assert(anonymizeResponse.status === 503, "Anonymization endpoint returns 503 while unavailable");
+    assert(
+        JSON.stringify(await anonymizeResponse.json()) === JSON.stringify({
+            success: false,
+            error: { message: "Customer account anonymization is currently unavailable" },
+        }),
+        "Anonymization endpoint returns the standard unavailable response"
+    );
+    assert(!anonymizeResponse.headers.has("set-cookie"), "Anonymization does not mutate auth cookies");
 
     console.log("✔ All Customer domain unit tests passed successfully! 🎯");
 }

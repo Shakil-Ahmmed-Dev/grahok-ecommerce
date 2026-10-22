@@ -1,12 +1,14 @@
 import { db } from "@/lib/drizzle";
-import { account, user } from "@/lib/drizzle/schemas/auth";
 import { customerAddressesTable, customerAuditLogsTable, customersTable, type TCustomerAuditAction } from "@/lib/drizzle/schemas/public";
-import { BadRequestError, NotFoundError } from "@/lib/error";
-import { logger } from "@/lib/pino/logger";
-import { verifyPassword } from "better-auth/crypto";
-import { randomUUID } from "crypto";
+import { BadRequestError, NotFoundError, ServiceUnavailableError } from "@/lib/error";
 import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
-import { extractClientNetworkMeta, recordCustomerAuditLog } from "./audit";
+import { recordCustomerAuditLog } from "./audit";
+import {
+    assertCustomerSelfServiceAccess,
+    customerProfileForSelfService,
+    customerIdentityLinkDeniedError,
+    decideCustomerIdentityLink,
+} from "./self-service-policy";
 import {
     type ClientAuditMeta,
     CustomerAdminDetailSchema,
@@ -56,7 +58,8 @@ function splitFullName(name?: string | null): { firstName: string | null; lastNa
 export async function getOrCreateCustomer(
     authUserId: string,
     email: string,
-    name?: string | null
+    name?: string | null,
+    emailVerified = false
 ): Promise<TCustomerPublicProfile> {
     const normalizedEmail = email.trim().toLowerCase();
 
@@ -71,25 +74,33 @@ export async function getOrCreateCustomer(
     });
 
     if (existingByAuth) {
-        return CustomerPublicProfileSchema.parse(existingByAuth);
+        return CustomerPublicProfileSchema.parse(customerProfileForSelfService(existingByAuth));
     }
 
-    // 2. Try finding by email (e.g. created previously as guest or before OAuth link)
-    const existingByEmail = await db.query.customersTable.findFirst({
-        where: and(
-            eq(sql`LOWER(${customersTable.email})`, normalizedEmail),
-            isNull(customersTable.deletedAt)
-        ),
-        with: {
-            addresses: {
-                where: isNull(customerAddressesTable.deletedAt),
-            },
-        },
+    // 2. Match by normalized email, including deleted records that require recovery.
+    const matchingCustomers = await db.query.customersTable.findMany({
+        where: eq(sql`LOWER(${customersTable.email})`, normalizedEmail),
     });
 
-    if (existingByEmail) {
-        // Link authUserId if not already linked
-        if (!existingByEmail.authUserId) {
+    if (matchingCustomers.length > 0) {
+        if (matchingCustomers.length !== 1) {
+            throw customerIdentityLinkDeniedError();
+        }
+
+        const existingByEmail = matchingCustomers[0]!;
+        const linkDecision = decideCustomerIdentityLink({
+            authUserId: existingByEmail.authUserId,
+            customerStatus: existingByEmail.status,
+            deletedAt: existingByEmail.deletedAt,
+            requesterAuthUserId: authUserId,
+            emailVerified,
+        });
+
+        if (linkDecision === "owned") {
+            return getCustomerProfile({ customerId: existingByEmail.id });
+        }
+
+        if (linkDecision === "claim") {
             const [updated] = await db
                 .update(customersTable)
                 .set({
@@ -97,17 +108,34 @@ export async function getOrCreateCustomer(
                     customerType: "registered",
                     updatedAt: new Date(),
                 })
-                .where(eq(customersTable.id, existingByEmail.id))
+                .where(buildCustomerIdentityLinkCondition(existingByEmail.id, normalizedEmail))
                 .returning();
 
             if (updated) {
-                return CustomerPublicProfileSchema.parse({
-                    ...updated,
-                    addresses: existingByEmail.addresses,
-                });
+                return getCustomerProfile({ customerId: updated.id });
+            }
+
+            // Another request may have linked this identity while this request was running.
+            const linkedToRequester = await db.query.customersTable.findFirst({
+                where: and(
+                    eq(customersTable.authUserId, authUserId),
+                    isNull(customersTable.deletedAt)
+                ),
+                with: {
+                    addresses: {
+                        where: isNull(customerAddressesTable.deletedAt),
+                    },
+                },
+            });
+
+            if (linkedToRequester) {
+                return CustomerPublicProfileSchema.parse(
+                    customerProfileForSelfService(linkedToRequester)
+                );
             }
         }
-        return CustomerPublicProfileSchema.parse(existingByEmail);
+
+        throw customerIdentityLinkDeniedError();
     }
 
     // 3. Create new customer
@@ -133,16 +161,11 @@ export async function getOrCreateCustomer(
             ...inserted,
             addresses: [],
         });
-    } catch (err: unknown) {
-        logger.warn({
-            message: "Conflict or error during customer insertion, attempting fallback lookup",
-            error: err,
-        });
-        // Handle race conditions where another concurrent request created the record
+    } catch (error: unknown) {
         const fallback = await db.query.customersTable.findFirst({
-            where: or(
+            where: and(
                 eq(customersTable.authUserId, authUserId),
-                eq(sql`LOWER(${customersTable.email})`, normalizedEmail)
+                isNull(customersTable.deletedAt)
             ),
             with: {
                 addresses: {
@@ -152,10 +175,20 @@ export async function getOrCreateCustomer(
         });
 
         if (fallback) {
-            return CustomerPublicProfileSchema.parse(fallback);
+            return CustomerPublicProfileSchema.parse(customerProfileForSelfService(fallback));
         }
-        throw err;
+        throw error;
     }
+}
+
+export function buildCustomerIdentityLinkCondition(customerId: string, normalizedEmail: string) {
+    return and(
+        eq(customersTable.id, customerId),
+        eq(sql`LOWER(${customersTable.email})`, normalizedEmail),
+        eq(customersTable.status, "active"),
+        isNull(customersTable.authUserId),
+        isNull(customersTable.deletedAt)
+    )!;
 }
 
 /**
@@ -188,7 +221,23 @@ export async function getCustomerProfile(
         throw new NotFoundError("Customer not found");
     }
 
-    return CustomerPublicProfileSchema.parse(customer);
+    return CustomerPublicProfileSchema.parse(customerProfileForSelfService(customer));
+}
+
+async function requireCustomerSelfServiceAccess(
+    customerId: string,
+    capability: "profileRead" | "profileWrite" | "addresses" | "export"
+) {
+    const customer = await db.query.customersTable.findFirst({
+        where: and(eq(customersTable.id, customerId), isNull(customersTable.deletedAt)),
+    });
+
+    if (!customer) {
+        throw new NotFoundError("Customer not found");
+    }
+
+    assertCustomerSelfServiceAccess(customer.status, capability);
+    return customer;
 }
 
 /**
@@ -199,13 +248,7 @@ export async function updateCustomerProfile(
     data: TUpdateCustomerProfileInput,
     clientMeta?: ClientAuditMeta
 ): Promise<TCustomerPublicProfile> {
-    const existing = await db.query.customersTable.findFirst({
-        where: and(eq(customersTable.id, customerId), isNull(customersTable.deletedAt)),
-    });
-
-    if (!existing) {
-        throw new NotFoundError("Customer not found");
-    }
+    const existing = await requireCustomerSelfServiceAccess(customerId, "profileWrite");
 
     const [updated] = await db
         .update(customersTable)
@@ -216,7 +259,13 @@ export async function updateCustomerProfile(
             ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
             updatedAt: new Date(),
         })
-        .where(eq(customersTable.id, customerId))
+        .where(
+            and(
+                eq(customersTable.id, customerId),
+                eq(customersTable.status, "active"),
+                isNull(customersTable.deletedAt)
+            )
+        )
         .returning();
 
     if (!updated) {
@@ -258,6 +307,8 @@ export async function updateCustomerProfile(
  * Get all active addresses for a customer.
  */
 export async function getCustomerAddresses(customerId: string): Promise<TCustomerAddressDTO[]> {
+    await requireCustomerSelfServiceAccess(customerId, "addresses");
+
     const addresses = await db.query.customerAddressesTable.findMany({
         where: and(
             eq(customerAddressesTable.customerId, customerId),
@@ -311,6 +362,8 @@ export async function setDefaultAddress(
     type: TSetDefaultAddressType,
     clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAddressDTO> {
+    await requireCustomerSelfServiceAccess(customerId, "addresses");
+
     // 1. Verify target address belongs to customer and is not soft deleted
     const target = await db.query.customerAddressesTable.findFirst({
         where: and(
@@ -363,6 +416,8 @@ export async function addCustomerAddress(
     data: TCreateCustomerAddressInput,
     clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAddressDTO> {
+    await requireCustomerSelfServiceAccess(customerId, "addresses");
+
     // 1. Quota check: active addresses count
     const [countResult] = await db
         .select({ count: sql<number>`count(*)::int` })
@@ -450,6 +505,8 @@ export async function updateCustomerAddress(
     data: TUpdateCustomerAddressInput,
     clientMeta?: ClientAuditMeta
 ): Promise<TCustomerAddressDTO> {
+    await requireCustomerSelfServiceAccess(customerId, "addresses");
+
     const existing = await db.query.customerAddressesTable.findFirst({
         where: and(
             eq(customerAddressesTable.id, addressId),
@@ -524,6 +581,8 @@ export async function deleteCustomerAddress(
     addressId: string,
     clientMeta?: ClientAuditMeta
 ): Promise<{ success: boolean; deletedAddressId: string }> {
+    await requireCustomerSelfServiceAccess(customerId, "addresses");
+
     const existing = await db.query.customerAddressesTable.findFirst({
         where: and(
             eq(customerAddressesTable.id, addressId),
@@ -763,9 +822,7 @@ export async function exportCustomerData(
     clientMeta?: ClientAuditMeta
 ): Promise<TCustomerDataExport> {
     const customer = await getCustomerProfile({ customerId });
-    if (!customer) {
-        throw new NotFoundError("Customer not found");
-    }
+    assertCustomerSelfServiceAccess(customer.status, "export");
 
     const auditLogs = await db.query.customerAuditLogsTable.findMany({
         where: eq(customerAuditLogsTable.customerId, customerId),
@@ -798,135 +855,17 @@ export async function exportCustomerData(
     return CustomerDataExportSchema.parse(exportPayload);
 }
 
-/**
- * GDPR Right to Erasure / Pseudonymization Pipeline.
- * 1. Verifies customer exists and is not already anonymized.
- * 2. Checks active orders safety gate.
- * 3. Verifies password (if credential provider) or confirmation text (if OAuth-only).
- * 4. Hard deletes customer addresses.
- * 5. Redacts previous audit logs changes/IP/UA for this customer.
- * 6. Anonymizes customer profile in customersTable.
- * 7. Deletes Better-Auth user from auth.user (cascading sessions and accounts).
- * 8. Records final customer_anonymized audit log.
- */
 export async function anonymizeCustomer(
-    customerId: string,
-    authUserId: string,
-    input: TCustomerAnonymizeInput,
-    clientMeta?: ClientAuditMeta
+    _customerId: string,
+    _authUserId: string,
+    _input: TCustomerAnonymizeInput,
+    _clientMeta?: ClientAuditMeta
 ): Promise<{ success: boolean; message: string }> {
-    const customer = await db.query.customersTable.findFirst({
-        where: eq(customersTable.id, customerId),
-    });
-
-    if (!customer) {
-        throw new NotFoundError("Customer not found");
-    }
-
-    if (customer.isAnonymized) {
-        throw new BadRequestError("Customer account is already anonymized");
-    }
-
-    const hasActiveOrders = await checkActiveCustomerOrders(customerId);
-    if (hasActiveOrders) {
-        throw new BadRequestError("Cannot anonymize account while orders are active or in progress");
-    }
-
-    // Verification check:
-    // If user has a password in auth.account (providerId === 'credential'), verify input.password
-    // If user is OAuth-only, require confirmationText === 'DELETE MY ACCOUNT'
-    const credentialAccount = await db.query.account.findFirst({
-        where: and(
-            eq(account.userId, authUserId),
-            eq(account.providerId, "credential")
-        ),
-    });
-
-    if (credentialAccount?.password) {
-        if (!input.password) {
-            throw new BadRequestError("Password is required to confirm account deletion");
-        }
-        const isValid = await verifyPassword({
-            hash: credentialAccount.password,
-            password: input.password,
-        });
-        if (!isValid) {
-            throw new BadRequestError("Invalid password provided");
-        }
-    } else {
-        if (input.confirmationText !== "DELETE MY ACCOUNT") {
-            throw new BadRequestError("Must type 'DELETE MY ACCOUNT' to confirm deletion");
-        }
-    }
-
-    // Record anonymization request
-    await recordCustomerAuditLog({
-        customerId,
-        actorId: authUserId,
-        actorType: "customer",
-        action: "anonymization_requested",
-        changes: { reason: "gdpr_erasure_request" },
-        headers: clientMeta?.headers,
-        ipAddress: clientMeta?.ipAddress,
-        userAgent: clientMeta?.userAgent,
-    });
-
-    // Hard delete customer addresses
-    await db.delete(customerAddressesTable).where(eq(customerAddressesTable.customerId, customerId));
-
-    // Redact previous customer audit logs changes and network metadata
-    await db
-        .update(customerAuditLogsTable)
-        .set({
-            changes: { redacted: true, reason: "gdpr_erasure" },
-            ipAddress: null,
-            userAgent: null,
-        })
-        .where(eq(customerAuditLogsTable.customerId, customerId));
-
-    // Anonymize customer profile record
-    const anonymizedEmail = `anonymized_${randomUUID()}@deleted.local`;
-    await db
-        .update(customersTable)
-        .set({
-            email: anonymizedEmail,
-            firstName: "Anonymized",
-            lastName: "",
-            phone: null,
-            avatarUrl: null,
-            adminNotes: null,
-            tags: [],
-            metadata: {},
-            status: "archived",
-            isAnonymized: true,
-            anonymizedAt: new Date(),
-            authUserId: null,
-            updatedAt: new Date(),
-        })
-        .where(eq(customersTable.id, customerId));
-
-    // Delete Better-Auth user from auth.user (cascades sessions and accounts)
-    await db.delete(user).where(eq(user.id, authUserId));
-
-    // Insert final audit log
-    const networkMeta = extractClientNetworkMeta(clientMeta?.headers);
-    await db.insert(customerAuditLogsTable).values({
-        customerId,
-        actorId: authUserId,
-        actorType: "customer",
-        action: "customer_anonymized",
-        changes: {
-            reason: "gdpr_erasure_completed",
-            anonymizedAt: new Date().toISOString(),
-        },
-        ipAddress: clientMeta?.ipAddress ?? networkMeta.ipAddress,
-        userAgent: clientMeta?.userAgent ?? networkMeta.userAgent,
-    });
-
-    return {
-        success: true,
-        message: "Customer account successfully anonymized and deleted",
-    };
+    void _customerId;
+    void _authUserId;
+    void _input;
+    void _clientMeta;
+    throw new ServiceUnavailableError("Customer account anonymization is currently unavailable");
 }
 
 /**

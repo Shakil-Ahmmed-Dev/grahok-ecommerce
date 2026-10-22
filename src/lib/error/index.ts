@@ -10,7 +10,8 @@ export type StatusCode =
     | 404
     | 409
     | 422
-    | 500;
+    | 500
+    | 503;
 
 export class AppError extends Error {
     constructor(
@@ -59,5 +60,11 @@ export class NotFoundError extends AppError {
 export class ConflictError extends AppError {
     constructor(message = "Conflict") {
         super(409, message);
+    }
+}
+
+export class ServiceUnavailableError extends AppError {
+    constructor(message = "Service unavailable") {
+        super(503, message);
     }
 }

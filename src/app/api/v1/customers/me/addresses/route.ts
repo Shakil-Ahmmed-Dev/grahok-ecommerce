@@ -7,7 +7,12 @@ import { checkRateLimit } from "@/lib/rate-limit/rate-limiter";
 export const GET = async (request: Request) => {
     try {
         const user = await requireAuthUser(request.headers);
-        const customer = await customerActions.getOrCreateCustomer(user.id, user.email, user.name);
+        const customer = await customerActions.getOrCreateCustomer(
+            user.id,
+            user.email,
+            user.name,
+            user.emailVerified
+        );
         const addresses = await customerActions.getCustomerAddresses(customer.id);
         return ok(addresses);
     } catch (err) {
@@ -24,7 +29,12 @@ export const POST = async (request: Request) => {
             return errorResponse("Too many requests", 429, { retryAfter: rateLimit.retryAfter });
         }
 
-        const customer = await customerActions.getOrCreateCustomer(user.id, user.email, user.name);
+        const customer = await customerActions.getOrCreateCustomer(
+            user.id,
+            user.email,
+            user.name,
+            user.emailVerified
+        );
         const body = await request.json();
         const validated = CreateCustomerAddressSchema.parse(body);
 

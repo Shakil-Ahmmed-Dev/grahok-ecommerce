@@ -13,7 +13,12 @@ export const GET = async (request: Request) => {
             return errorResponse("Too many requests", 429, { retryAfter: rateLimit.retryAfter });
         }
 
-        const customer = await customerActions.getOrCreateCustomer(user.id, user.email, user.name);
+        const customer = await customerActions.getOrCreateCustomer(
+            user.id,
+            user.email,
+            user.name,
+            user.emailVerified
+        );
         const exportData = await customerActions.exportCustomerData(customer.id, {
             actorId: user.id,
             actorType: "customer",
