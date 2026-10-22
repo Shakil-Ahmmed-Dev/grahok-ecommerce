@@ -3,18 +3,77 @@ import { slugify } from "@/lib/slug";
 import { db } from "./index";
 import {
     categoriesTable,
+    customerAddressesTable,
+    customerAuditLogsTable,
+    customersTable,
     productCategoriesTable,
     productOptionsTable,
     productOptionValuesTable,
     productsTable,
     productVariantsTable,
+    variantTypesTable,
+    variantTypeValuesTable,
 } from "./schemas/public";
 import { normalizeVariantSignature } from "@/features/products/matrix";
 import { syncProductAggregateReadModel } from "@/features/products/actions";
+import { eq } from "drizzle-orm";
 
 interface SeedProductItem extends Omit<TCreateProductInput, "categoryIds" | "primaryCategoryId"> {
     categorySlug: string;
     parentCategorySlug: string;
+}
+
+interface SeedVariantType {
+    name: string;
+    code: string;
+    description: string;
+    defaultInventoryType: "discrete" | "shared_pool" | "no_tracking";
+    position: number;
+    isActive: boolean;
+    values: Array<{
+        value: string;
+        position: number;
+        swatchMeta?: string | null;
+        defaultConsumptionRate?: number | null;
+    }>;
+}
+
+interface SeedCustomerAddress {
+    recipientName: string;
+    company?: string | null;
+    phone: string;
+    addressLine1: string;
+    addressLine2?: string | null;
+    city: string;
+    state?: string | null;
+    postalCode: string;
+    countryCode: string;
+    addressType: "shipping" | "billing" | "both";
+    isDefaultShipping: boolean;
+    isDefaultBilling: boolean;
+}
+
+interface SeedCustomerAuditLog {
+    actorType: "customer" | "admin" | "system";
+    action: string;
+    changes: Record<string, unknown>;
+}
+
+interface SeedCustomerItem {
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    customerType: "registered" | "guest";
+    status: "active" | "suspended" | "archived";
+    riskScore: number;
+    adminNotes?: string | null;
+    tags: string[];
+    totalOrders: number;
+    totalSpent: string;
+    metadata?: Record<string, unknown>;
+    addresses: SeedCustomerAddress[];
+    auditLogs: SeedCustomerAuditLog[];
 }
 
 const seedCategories = [
@@ -36,6 +95,59 @@ const seedCategories = [
     { name: "Puzzles", slug: "puzzles", parentSlug: "toys-games" },
 ];
 
+const seedVariantTypes: SeedVariantType[] = [
+    {
+        name: "Capacity",
+        code: "capacity",
+        description: "Container capacity and fluid volume",
+        defaultInventoryType: "discrete",
+        position: 0,
+        isActive: true,
+        values: [
+            { value: "500ml", position: 0 },
+            { value: "750ml", position: 1 },
+            { value: "1000ml", position: 2 },
+        ],
+    },
+    {
+        name: "Color",
+        code: "color",
+        description: "Visual appearance colorways",
+        defaultInventoryType: "discrete",
+        position: 1,
+        isActive: true,
+        values: [
+            { value: "Black", swatchMeta: "#000000", position: 0 },
+            { value: "White", swatchMeta: "#FFFFFF", position: 1 },
+        ],
+    },
+    {
+        name: "Size",
+        code: "size",
+        description: "Apparel standard garment sizing",
+        defaultInventoryType: "discrete",
+        position: 2,
+        isActive: true,
+        values: [
+            { value: "M", position: 0 },
+            { value: "L", position: 1 },
+        ],
+    },
+    {
+        name: "Package Size",
+        code: "package_size",
+        description: "Bulk pantry and grain packaging portions",
+        defaultInventoryType: "shared_pool",
+        position: 3,
+        isActive: true,
+        values: [
+            { value: "500g", position: 0, defaultConsumptionRate: 0.5 },
+            { value: "1kg", position: 1, defaultConsumptionRate: 1.0 },
+            { value: "5kg", position: 2, defaultConsumptionRate: 5.0 },
+        ],
+    },
+];
+
 const dummyProducts: SeedProductItem[] = [
     {
         name: "Wireless Noise-Cancelling Headphones",
@@ -54,7 +166,12 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "55.00",
         sellPrice: "99.99",
-        stock: "120"
+        stock: "120",
+        allowBackorder: false,
+        weight: 0.25,
+        packageLength: 20.5,
+        packageWidth: 18.0,
+        packageHeight: 8.5,
     },
     {
         name: "Ergonomic Office Chair",
@@ -73,7 +190,12 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "120.00",
         sellPrice: "249.99",
-        stock: "45"
+        stock: "45",
+        allowBackorder: false,
+        weight: 18.5,
+        packageLength: 70.0,
+        packageWidth: 65.0,
+        packageHeight: 40.0,
     },
     {
         name: "Stainless Steel Water Bottle 750ml",
@@ -93,6 +215,11 @@ const dummyProducts: SeedProductItem[] = [
         purchasePrice: "6.50",
         sellPrice: "14.99",
         stock: "300",
+        allowBackorder: false,
+        weight: 0.35,
+        packageLength: 8.0,
+        packageWidth: 8.0,
+        packageHeight: 28.0,
         options: [
             {
                 name: "Capacity",
@@ -110,6 +237,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 5.0,
                 sellPrice: 12.99,
                 stock: 100,
+                allowBackorder: false,
+                weight: 0.28,
+                packageLength: 7.5,
+                packageWidth: 7.5,
+                packageHeight: 24.0,
                 isDefault: false,
                 isActive: true,
             },
@@ -119,6 +251,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 6.5,
                 sellPrice: 14.99,
                 stock: 120,
+                allowBackorder: false,
+                weight: 0.35,
+                packageLength: 8.0,
+                packageWidth: 8.0,
+                packageHeight: 28.0,
                 isDefault: true,
                 isActive: true,
             },
@@ -128,6 +265,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 8.0,
                 sellPrice: 18.99,
                 stock: 80,
+                allowBackorder: false,
+                weight: 0.45,
+                packageLength: 8.5,
+                packageWidth: 8.5,
+                packageHeight: 32.0,
                 isDefault: false,
                 isActive: true,
             },
@@ -148,6 +290,11 @@ const dummyProducts: SeedProductItem[] = [
         purchasePrice: "8.00",
         sellPrice: "19.99",
         stock: "200",
+        allowBackorder: true,
+        weight: 0.20,
+        packageLength: 30.0,
+        packageWidth: 25.0,
+        packageHeight: 2.0,
         options: [
             {
                 name: "Color",
@@ -171,6 +318,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 8.0,
                 sellPrice: 19.99,
                 stock: 50,
+                allowBackorder: true,
+                weight: 0.18,
+                packageLength: 30.0,
+                packageWidth: 25.0,
+                packageHeight: 2.0,
                 isDefault: true,
                 isActive: true,
             },
@@ -180,6 +332,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 8.0,
                 sellPrice: 19.99,
                 stock: 50,
+                allowBackorder: true,
+                weight: 0.22,
+                packageLength: 30.0,
+                packageWidth: 25.0,
+                packageHeight: 2.0,
                 isDefault: false,
                 isActive: true,
             },
@@ -189,6 +346,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 8.0,
                 sellPrice: 19.99,
                 stock: 50,
+                allowBackorder: true,
+                weight: 0.18,
+                packageLength: 30.0,
+                packageWidth: 25.0,
+                packageHeight: 2.0,
                 isDefault: false,
                 isActive: true,
             },
@@ -198,6 +360,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 8.0,
                 sellPrice: 19.99,
                 stock: 50,
+                allowBackorder: true,
+                weight: 0.22,
+                packageLength: 30.0,
+                packageWidth: 25.0,
+                packageHeight: 2.0,
                 isDefault: false,
                 isActive: true,
             },
@@ -221,7 +388,12 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "350.00",
         sellPrice: "599.99",
-        stock: "25"
+        stock: "25",
+        allowBackorder: false,
+        weight: 14.5,
+        packageLength: 135.0,
+        packageWidth: 82.0,
+        packageHeight: 14.0,
     },
     {
         name: "Bluetooth Fitness Tracker",
@@ -236,7 +408,12 @@ const dummyProducts: SeedProductItem[] = [
         status: "draft",
         purchasePrice: "15.00",
         sellPrice: "39.99",
-        stock: "150"
+        stock: "150",
+        allowBackorder: false,
+        weight: 0.05,
+        packageLength: 12.0,
+        packageWidth: 8.0,
+        packageHeight: 4.0,
     },
     {
         name: "Ceramic Non-Stick Frying Pan 10 inch",
@@ -252,7 +429,12 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "9.00",
         sellPrice: "24.99",
-        stock: "80"
+        stock: "80",
+        allowBackorder: false,
+        weight: 1.2,
+        packageLength: 46.0,
+        packageWidth: 28.0,
+        packageHeight: 7.0,
     },
     {
         name: "Kids Wooden Puzzle Set",
@@ -267,7 +449,12 @@ const dummyProducts: SeedProductItem[] = [
         status: "draft",
         purchasePrice: "4.00",
         sellPrice: "12.99",
-        stock: "500"
+        stock: "500",
+        allowBackorder: false,
+        weight: 0.65,
+        packageLength: 22.0,
+        packageWidth: 22.0,
+        packageHeight: 4.5,
     },
     {
         name: "Portable Power Bank 10000mAh",
@@ -283,7 +470,12 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "10.00",
         sellPrice: "29.99",
-        stock: "220"
+        stock: "220",
+        allowBackorder: false,
+        weight: 0.22,
+        packageLength: 15.0,
+        packageWidth: 7.5,
+        packageHeight: 2.5,
     },
     {
         name: "Handmade Soy Scented Candle - Lavender",
@@ -299,7 +491,12 @@ const dummyProducts: SeedProductItem[] = [
         publishedAt: new Date(),
         purchasePrice: "2.50",
         sellPrice: "9.99",
-        stock: "340"
+        stock: "340",
+        allowBackorder: false,
+        weight: 0.40,
+        packageLength: 9.0,
+        packageWidth: 9.0,
+        packageHeight: 11.0,
     },
     {
         name: "Premium Aromatic Basmati Rice",
@@ -318,6 +515,11 @@ const dummyProducts: SeedProductItem[] = [
         stock: "0",
         poolStock: "50",
         inventoryType: "shared_pool",
+        allowBackorder: true,
+        weight: 1.0,
+        packageLength: 25.0,
+        packageWidth: 15.0,
+        packageHeight: 8.0,
         options: [
             {
                 name: "Package Size",
@@ -337,6 +539,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 2.0,
                 sellPrice: 2.99,
                 stock: 0,
+                allowBackorder: true,
+                weight: 0.52,
+                packageLength: 18.0,
+                packageWidth: 12.0,
+                packageHeight: 5.0,
                 isDefault: false,
                 isActive: true,
             },
@@ -348,6 +555,11 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 4.0,
                 sellPrice: 5.5,
                 stock: 0,
+                allowBackorder: true,
+                weight: 1.02,
+                packageLength: 25.0,
+                packageWidth: 15.0,
+                packageHeight: 8.0,
                 isDefault: true,
                 isActive: true,
             },
@@ -359,11 +571,152 @@ const dummyProducts: SeedProductItem[] = [
                 purchasePrice: 18.0,
                 sellPrice: 24.99,
                 stock: 0,
+                allowBackorder: true,
+                weight: 5.05,
+                packageLength: 40.0,
+                packageWidth: 28.0,
+                packageHeight: 12.0,
                 isDefault: false,
                 isActive: true,
             },
         ],
     }
+];
+
+const seedCustomers: SeedCustomerItem[] = [
+    {
+        email: "shakilahmmedwakil.saw@gmail.com",
+        firstName: "Shakil",
+        lastName: "Ahmmed",
+        phone: "+8801712345678",
+        customerType: "registered",
+        status: "active",
+        riskScore: 0,
+        adminNotes: "Platform administrator & VIP customer",
+        tags: ["vip", "staff", "early-adopter"],
+        totalOrders: 5,
+        totalSpent: "499.50",
+        metadata: { preferredContact: "email", loyaltyTier: "gold" },
+        addresses: [
+            {
+                recipientName: "Shakil Ahmmed",
+                company: "Grahok Inc.",
+                phone: "+8801712345678",
+                addressLine1: "House 12, Road 5, Dhanmondi",
+                city: "Dhaka",
+                postalCode: "1209",
+                countryCode: "BD",
+                addressType: "shipping",
+                isDefaultShipping: true,
+                isDefaultBilling: false,
+            },
+            {
+                recipientName: "Shakil Ahmmed",
+                phone: "+8801712345678",
+                addressLine1: "House 12, Road 5, Dhanmondi",
+                city: "Dhaka",
+                postalCode: "1209",
+                countryCode: "BD",
+                addressType: "billing",
+                isDefaultShipping: false,
+                isDefaultBilling: true,
+            },
+        ],
+        auditLogs: [
+            {
+                actorType: "system",
+                action: "address_created",
+                changes: { note: "Initial verified address creation" },
+            },
+        ],
+    },
+    {
+        email: "jane.doe@example.com",
+        firstName: "Jane",
+        lastName: "Doe",
+        phone: "+15552345678",
+        customerType: "registered",
+        status: "active",
+        riskScore: 0,
+        adminNotes: "Frequent buyer",
+        tags: ["retail", "repeat-customer"],
+        totalOrders: 3,
+        totalSpent: "189.97",
+        metadata: { source: "google-ads" },
+        addresses: [
+            {
+                recipientName: "Jane Doe",
+                company: "Acme Corp",
+                phone: "+15552345678",
+                addressLine1: "123 Market Street, Suite 400",
+                city: "San Francisco",
+                state: "CA",
+                postalCode: "94105",
+                countryCode: "US",
+                addressType: "both",
+                isDefaultShipping: true,
+                isDefaultBilling: true,
+            },
+        ],
+        auditLogs: [
+            {
+                actorType: "customer",
+                action: "profile_updated",
+                changes: { phone: "+15552345678" },
+            },
+        ],
+    },
+    {
+        email: "alex.smith@example.com",
+        firstName: "Alex",
+        lastName: "Smith",
+        phone: "+15559876543",
+        customerType: "guest",
+        status: "active",
+        riskScore: 10,
+        adminNotes: "One-off guest order",
+        tags: ["guest-checkout"],
+        totalOrders: 1,
+        totalSpent: "29.99",
+        metadata: { guestCheckoutIp: "192.168.1.100" },
+        addresses: [
+            {
+                recipientName: "Alex Smith",
+                phone: "+15559876543",
+                addressLine1: "456 Broadway Ave",
+                city: "New York",
+                state: "NY",
+                postalCode: "10001",
+                countryCode: "US",
+                addressType: "shipping",
+                isDefaultShipping: true,
+                isDefaultBilling: false,
+            },
+        ],
+        auditLogs: [],
+    },
+    {
+        email: "suspicious.user@example.com",
+        firstName: "Robert",
+        lastName: "Shady",
+        phone: "+15551112233",
+        customerType: "registered",
+        status: "suspended",
+        riskScore: 90,
+        adminNotes: "Multiple chargeback warnings and suspicious transactions.",
+        tags: ["high-risk", "flagged"],
+        totalOrders: 0,
+        totalSpent: "0.00",
+        metadata: { flaggedReason: "chargeback_risk" },
+        addresses: [],
+        auditLogs: [
+            {
+                actorType: "admin",
+                action: "risk_score_adjusted",
+                changes: { previousScore: 0, newScore: 90, reason: "Chargeback disputes reported" },
+            },
+        ],
+    },
 ];
 
 async function seed() {
@@ -402,25 +755,60 @@ async function seed() {
         categoryMap.set(cat.slug, existing.id);
     }
 
+    console.log("Seeding variant types and values...");
+    const variantTypeMap = new Map<string, string>();
+
+    for (const vt of seedVariantTypes) {
+        let existing = await db.query.variantTypesTable.findFirst({
+            where: (t, { eq }) => eq(t.code, vt.code),
+        });
+
+        if (!existing) {
+            [existing] = await db.insert(variantTypesTable).values({
+                name: vt.name,
+                code: vt.code,
+                description: vt.description,
+                defaultInventoryType: vt.defaultInventoryType,
+                position: vt.position,
+                isActive: vt.isActive,
+            }).returning();
+
+            for (const val of vt.values) {
+                await db.insert(variantTypeValuesTable).values({
+                    variantTypeId: existing.id,
+                    value: val.value,
+                    position: val.position,
+                    swatchMeta: val.swatchMeta ?? null,
+                    defaultConsumptionRate: val.defaultConsumptionRate ?? null,
+                });
+            }
+        }
+        variantTypeMap.set(vt.name.toLowerCase(), existing.id);
+    }
+
     console.log("Seeding products and linking categories...");
-    const existingProducts = await db.query.productsTable.findMany();
+    for (const item of dummyProducts) {
+        const { categorySlug, parentCategorySlug, ...productPayload } = item;
+        const parsed = CreateProductSchema.parse(productPayload);
+        const slug = slugify(parsed.slug ?? parsed.name);
+        const { purchasePrice, categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, options, variants, ...productInsertData } = parsed;
+        void _categoryIds;
+        void _primaryCategoryId;
 
-    if (existingProducts.length === 0) {
-        for (const item of dummyProducts) {
-            const { categorySlug, parentCategorySlug, ...productPayload } = item;
-            const parsed = CreateProductSchema.parse(productPayload);
-            const slug = slugify(parsed.slug ?? parsed.name);
-            const { purchasePrice, categoryIds: _categoryIds, primaryCategoryId: _primaryCategoryId, options, variants, ...productInsertData } = parsed;
-            void _categoryIds;
-            void _primaryCategoryId;
+        const initialSellPrice = variants && variants.length > 0
+            ? Math.min(...variants.map((v) => Number(v.sellPrice)))
+            : (parsed.sellPrice ?? 0);
+        const initialStock = variants && variants.length > 0 && productInsertData.inventoryType === "discrete"
+            ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+            : (parsed.stock ?? 0);
 
-            const initialSellPrice = variants && variants.length > 0
-                ? Math.min(...variants.map((v) => Number(v.sellPrice)))
-                : (parsed.sellPrice ?? 0);
-            const initialStock = variants && variants.length > 0 && productInsertData.inventoryType === "discrete"
-                ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
-                : (parsed.stock ?? 0);
+        let existingProduct = await db.query.productsTable.findFirst({
+            where: (p, { eq }) => eq(p.slug, slug),
+        });
 
+        let productId: string;
+
+        if (!existingProduct) {
             const [insertedProduct] = await db.insert(productsTable).values({
                 ...productInsertData,
                 sellPrice: initialSellPrice,
@@ -428,15 +816,18 @@ async function seed() {
                 slug,
             }).returning();
 
+            existingProduct = insertedProduct;
+            productId = insertedProduct.id;
+
             const childCatId = categoryMap.get(categorySlug);
             const parentCatId = categoryMap.get(parentCategorySlug);
 
             const categoryLinks: Array<{ productId: string; categoryId: string; isPrimary: boolean }> = [];
             if (childCatId) {
-                categoryLinks.push({ productId: insertedProduct.id, categoryId: childCatId, isPrimary: true });
+                categoryLinks.push({ productId, categoryId: childCatId, isPrimary: true });
             }
             if (parentCatId && parentCatId !== childCatId) {
-                categoryLinks.push({ productId: insertedProduct.id, categoryId: parentCatId, isPrimary: false });
+                categoryLinks.push({ productId, categoryId: parentCatId, isPrimary: false });
             }
 
             if (categoryLinks.length > 0) {
@@ -446,10 +837,12 @@ async function seed() {
             if (options && options.length > 0) {
                 for (let optIdx = 0; optIdx < options.length; optIdx++) {
                     const opt = options[optIdx];
+                    const linkedVariantTypeId = variantTypeMap.get(opt.name.toLowerCase()) ?? opt.variantTypeId ?? null;
                     const [insertedOpt] = await db.insert(productOptionsTable).values({
-                        productId: insertedProduct.id,
+                        productId,
                         name: opt.name,
                         position: opt.position ?? optIdx,
+                        variantTypeId: linkedVariantTypeId,
                     }).returning();
 
                     if (opt.values && opt.values.length > 0) {
@@ -472,23 +865,28 @@ async function seed() {
                     const signature = v.signature?.trim() || normalizeVariantSignature(v.optionValues);
                     const title = v.title?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0 ? Object.values(v.optionValues).join(" / ") : "Default");
                     const sku = (v.sku?.trim() || (v.optionValues && Object.keys(v.optionValues).length > 0
-                        ? `${insertedProduct.slug}-${Object.values(v.optionValues).map((val) => slugify(val).replace(/^-+|-+$/g, "")).join("-")}`
-                        : `${insertedProduct.slug}-default`
+                        ? `${existingProduct.slug}-${Object.values(v.optionValues).map((val) => slugify(val).replace(/^-+|-+$/g, "")).join("-")}`
+                        : `${existingProduct.slug}-default`
                     )).toLowerCase();
                     const isDefault = v.isDefault ?? (i === 0);
-                    const variantInvType = v.inventoryType ?? insertedProduct.inventoryType ?? "discrete";
+                    const variantInvType = v.inventoryType ?? existingProduct.inventoryType ?? "discrete";
 
                     await db.insert(productVariantsTable).values({
-                        productId: insertedProduct.id,
+                        productId,
                         title,
                         sku,
                         optionValues: v.optionValues ?? {},
                         signature,
                         inventoryType: variantInvType,
+                        allowBackorder: v.allowBackorder ?? existingProduct.allowBackorder ?? false,
                         purchasePrice: v.purchasePrice,
                         sellPrice: v.sellPrice,
                         stock: v.stock ?? 0,
                         poolConsumptionRate: v.poolConsumptionRate != null ? v.poolConsumptionRate : null,
+                        weight: v.weight ?? (existingProduct.weight != null ? Number(existingProduct.weight) : null),
+                        packageLength: v.packageLength ?? (existingProduct.packageLength != null ? Number(existingProduct.packageLength) : null),
+                        packageWidth: v.packageWidth ?? (existingProduct.packageWidth != null ? Number(existingProduct.packageWidth) : null),
+                        packageHeight: v.packageHeight ?? (existingProduct.packageHeight != null ? Number(existingProduct.packageHeight) : null),
                         isDefault,
                         isActive: v.isActive ?? true,
                         imageUrl: v.imageUrl ?? null,
@@ -496,31 +894,153 @@ async function seed() {
                 }
             } else {
                 // Seed simple product default variant for canonical purchasable entity contract
-                const defaultSku = `${insertedProduct.slug}-default`.toLowerCase();
-                const variantInvType = insertedProduct.inventoryType ?? "discrete";
+                const defaultSku = `${existingProduct.slug}-default`.toLowerCase();
+                const variantInvType = existingProduct.inventoryType ?? "discrete";
 
                 await db.insert(productVariantsTable).values({
-                    productId: insertedProduct.id,
+                    productId,
                     title: "Default",
                     sku: defaultSku,
                     optionValues: {},
                     signature: "default",
                     inventoryType: variantInvType,
+                    allowBackorder: existingProduct.allowBackorder ?? false,
                     purchasePrice: purchasePrice ?? 0,
-                    sellPrice: insertedProduct.sellPrice,
-                    stock: insertedProduct.stock ?? 0,
+                    sellPrice: existingProduct.sellPrice,
+                    stock: existingProduct.stock ?? 0,
                     poolConsumptionRate: null,
+                    weight: existingProduct.weight != null ? Number(existingProduct.weight) : null,
+                    packageLength: existingProduct.packageLength != null ? Number(existingProduct.packageLength) : null,
+                    packageWidth: existingProduct.packageWidth != null ? Number(existingProduct.packageWidth) : null,
+                    packageHeight: existingProduct.packageHeight != null ? Number(existingProduct.packageHeight) : null,
                     isDefault: true,
                     isActive: true,
-                    imageUrl: insertedProduct.featuredImageUrl ?? null,
+                    imageUrl: existingProduct.featuredImageUrl ?? null,
                 });
             }
-            await syncProductAggregateReadModel(db, insertedProduct.id);
+        } else {
+            // Update existing product with latest schema fields
+            productId = existingProduct.id;
+            await db.update(productsTable).set({
+                allowBackorder: parsed.allowBackorder ?? false,
+                weight: parsed.weight ?? null,
+                packageLength: parsed.packageLength ?? null,
+                packageWidth: parsed.packageWidth ?? null,
+                packageHeight: parsed.packageHeight ?? null,
+            }).where(eq(productsTable.id, productId));
+
+            // Link variantTypeId to existing options if missing
+            const existingOptions = await db.query.productOptionsTable.findMany({
+                where: (o, { eq }) => eq(o.productId, productId),
+            });
+            for (const opt of existingOptions) {
+                const linkedTypeId = variantTypeMap.get(opt.name.toLowerCase());
+                if (linkedTypeId && !opt.variantTypeId) {
+                    await db.update(productOptionsTable).set({
+                        variantTypeId: linkedTypeId,
+                    }).where(eq(productOptionsTable.id, opt.id));
+                }
+            }
+
+            // Update variants with new schema fields
+            const existingVariants = await db.query.productVariantsTable.findMany({
+                where: (v, { eq }) => eq(v.productId, productId),
+            });
+
+            if (variants && variants.length > 0) {
+                for (const v of variants) {
+                    const signature = v.signature?.trim() || normalizeVariantSignature(v.optionValues);
+                    const matchingVariant = existingVariants.find((ev) => ev.signature === signature);
+                    if (matchingVariant) {
+                        await db.update(productVariantsTable).set({
+                            allowBackorder: v.allowBackorder ?? parsed.allowBackorder ?? false,
+                            weight: v.weight ?? parsed.weight ?? null,
+                            packageLength: v.packageLength ?? parsed.packageLength ?? null,
+                            packageWidth: v.packageWidth ?? parsed.packageWidth ?? null,
+                            packageHeight: v.packageHeight ?? parsed.packageHeight ?? null,
+                        }).where(eq(productVariantsTable.id, matchingVariant.id));
+                    }
+                }
+            } else {
+                // Update default variant
+                const defaultVariant = existingVariants.find((ev) => ev.signature === "default" || ev.isDefault);
+                if (defaultVariant) {
+                    await db.update(productVariantsTable).set({
+                        allowBackorder: parsed.allowBackorder ?? false,
+                        weight: parsed.weight ?? null,
+                        packageLength: parsed.packageLength ?? null,
+                        packageWidth: parsed.packageWidth ?? null,
+                        packageHeight: parsed.packageHeight ?? null,
+                    }).where(eq(productVariantsTable.id, defaultVariant.id));
+                }
+            }
         }
-        console.log(`Inserted ${dummyProducts.length} products with category associations and variants.`);
-    } else {
-        console.log("Products table is already populated.");
+        await syncProductAggregateReadModel(db, productId);
     }
+    console.log(`Synced ${dummyProducts.length} products with category associations, variants, logistics metrics, and backorders.`);
+
+    console.log("Seeding customers, addresses, and audit logs...");
+    const existingCustomers = await db.query.customersTable.findMany();
+
+    // Check if auth user exists for primary registered customer
+    const authAdminUser = await db.query.user.findFirst({
+        where: (u, { eq }) => eq(u.email, "shakilahmmedwakil.saw@gmail.com"),
+    });
+
+    for (const cust of seedCustomers) {
+        let existingCust = existingCustomers.find((c) => c.email.toLowerCase() === cust.email.toLowerCase());
+        const authUserId = (cust.email === authAdminUser?.email) ? authAdminUser.id : null;
+
+        if (!existingCust) {
+            const [insertedCust] = await db.insert(customersTable).values({
+                email: cust.email,
+                authUserId,
+                firstName: cust.firstName,
+                lastName: cust.lastName,
+                phone: cust.phone,
+                customerType: cust.customerType,
+                status: cust.status,
+                riskScore: cust.riskScore,
+                adminNotes: cust.adminNotes ?? null,
+                tags: cust.tags,
+                metadata: cust.metadata ?? {},
+                totalOrders: cust.totalOrders,
+                totalSpent: cust.totalSpent,
+            }).returning();
+
+            existingCust = insertedCust;
+
+            for (const addr of cust.addresses) {
+                await db.insert(customerAddressesTable).values({
+                    customerId: insertedCust.id,
+                    recipientName: addr.recipientName,
+                    company: addr.company ?? null,
+                    phone: addr.phone,
+                    addressLine1: addr.addressLine1,
+                    addressLine2: addr.addressLine2 ?? null,
+                    city: addr.city,
+                    state: addr.state ?? null,
+                    postalCode: addr.postalCode,
+                    countryCode: addr.countryCode,
+                    addressType: addr.addressType,
+                    isDefaultShipping: addr.isDefaultShipping,
+                    isDefaultBilling: addr.isDefaultBilling,
+                });
+            }
+
+            for (const log of cust.auditLogs) {
+                await db.insert(customerAuditLogsTable).values({
+                    customerId: insertedCust.id,
+                    actorId: authUserId ?? "system",
+                    actorType: log.actorType,
+                    action: log.action,
+                    changes: log.changes,
+                });
+            }
+        }
+    }
+    console.log(`Synced ${seedCustomers.length} customers with addresses and audit logs.`);
+    console.log("Database seed completed successfully! 🚀");
 }
 
 seed().catch((err) => {

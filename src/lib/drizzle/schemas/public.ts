@@ -242,6 +242,7 @@ export const productsTable = pgTable("products", {
     }).notNull(),
     stock: numeric<"number">({
         scale: 2,
+        mode: "number",
     }).notNull().default(0),
     poolStock: numeric("pool_stock", {
         scale: 4,
