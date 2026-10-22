@@ -48,7 +48,6 @@ import {
     type TUpdateProductVariantInput,
     type TUpdateVariantTypeInput,
     type TVariantCheckoutSnapshot,
-    type TVariantCheckoutSnapshotOptions,
     type TVariantType,
 } from "./types";
 import { BadRequestError, ConflictError, NotFoundError, PermanentRedirectError } from "@/lib/error";
@@ -64,7 +63,7 @@ import {
     variantTypesTable,
     variantTypeValuesTable,
 } from "@/lib/drizzle/schemas/public";
-import { and, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
     buildCursorCondition,
     buildFuzzyOrderBy,
@@ -78,7 +77,7 @@ import {
     resolveProductSort,
 } from "./query";
 import { ensureSlug, slugify } from "@/lib/slug";
-import { calculateVariantStock, resolveEffectiveInventoryType, resolveEffectiveAllowBackorder, reserveVariantInventory, releaseVariantInventory, reserveCartInventory } from "./inventory";
+import { calculateVariantStock, resolveEffectiveInventoryType, resolveEffectiveAllowBackorder, reserveVariantInventory, releaseVariantInventory, reserveCartInventory, type InventoryExecutor } from "./inventory";
 import { generateCartesianPermutations, normalizeVariantSignature } from "./matrix";
 import {
     calculateConsignmentLogistics,
@@ -1757,7 +1756,7 @@ export const getVariantCheckoutSnapshots = async (
     options?: {
         requestedQuantity?: number;
         onlyActive?: boolean;
-        executor?: typeof db | any;
+        executor?: InventoryExecutor;
     }
 ): Promise<TVariantCheckoutSnapshot[]> => {
     if (!variantIds || variantIds.length === 0) {
@@ -1771,7 +1770,7 @@ export const getVariantCheckoutSnapshots = async (
 
     const client = options?.executor ?? db;
     const variants = await client.query.productVariantsTable.findMany({
-        where: (v: any, { inArray }: any) => inArray(v.id, uniqueIds),
+        where: (v, { inArray }) => inArray(v.id, uniqueIds),
         with: {
             product: true,
         },
@@ -1877,7 +1876,7 @@ export const getVariantCheckoutSnapshot = async (
     options?: {
         requestedQuantity?: number;
         onlyActive?: boolean;
-        executor?: typeof db | any;
+        executor?: InventoryExecutor;
     }
 ): Promise<TVariantCheckoutSnapshot> => {
     VariantIdSchema.parse(variantId);

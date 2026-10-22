@@ -4,6 +4,7 @@ import {
     releaseVariantInventory,
     reserveCartInventory,
 } from "@/features/products/inventory";
+import type { InventoryExecutor } from "@/features/products/inventory";
 import { ConflictError, BadRequestError } from "@/lib/error";
 
 async function runConcurrencyInventoryTestSuite() {
@@ -23,7 +24,7 @@ async function runConcurrencyInventoryTestSuite() {
     // 2. Test Discrete Reservation (Sufficient Stock)
     let currentStock = 10;
     let expectedQty = 4;
-    const mockDiscreteExecutor: any = {
+    const mockDiscreteExecutor = {
         query: {
             productVariantsTable: {
                 findFirst: async () => ({
@@ -61,7 +62,7 @@ async function runConcurrencyInventoryTestSuite() {
                 }),
             }),
         }),
-    };
+    } as unknown as InventoryExecutor;
 
     const res1 = await reserveVariantInventory({
         variantId: varId1,
@@ -81,15 +82,15 @@ async function runConcurrencyInventoryTestSuite() {
             quantity: 10, // Only 6 available
             executor: mockDiscreteExecutor,
         });
-    } catch (err: any) {
-        if (err instanceof ConflictError || err?.statusCode === 409) {
+    } catch (err: unknown) {
+        if (err instanceof ConflictError || (err instanceof Error && "statusCode" in err && err.statusCode === 409)) {
             threwConflict = true;
         }
     }
     console.assert(threwConflict, "Throws ConflictError when stock < quantity and allowBackorder is false");
 
     // 4. Test Discrete Reservation (Insufficient Stock, allowBackorder = true -> Succeeds with isBackordered = true)
-    const mockBackorderExecutor: any = {
+    const mockBackorderExecutor = {
         query: {
             productVariantsTable: {
                 findFirst: async () => ({
@@ -120,7 +121,7 @@ async function runConcurrencyInventoryTestSuite() {
                 }),
             }),
         }),
-    };
+    } as unknown as InventoryExecutor;
 
     const backorderRes = await reserveVariantInventory({
         variantId: varId1,
@@ -133,7 +134,7 @@ async function runConcurrencyInventoryTestSuite() {
 
     // 5. Test Shared Pool Reservation (Master Pool = 50kg, consumption rate = 0.5kg/unit)
     let poolStock = 50;
-    const mockPoolExecutor: any = {
+    const mockPoolExecutor = {
         query: {
             productVariantsTable: {
                 findFirst: async () => ({
@@ -172,7 +173,7 @@ async function runConcurrencyInventoryTestSuite() {
                 }),
             }),
         }),
-    };
+    } as unknown as InventoryExecutor;
 
     const poolRes = await reserveVariantInventory({
         variantId: varId1,
@@ -184,7 +185,7 @@ async function runConcurrencyInventoryTestSuite() {
     console.assert(poolRes.isBackordered === false, "Not backordered in shared pool");
 
     // 6. Test No Tracking Reservation
-    const mockNoTrackExecutor: any = {
+    const mockNoTrackExecutor = {
         query: {
             productVariantsTable: {
                 findFirst: async () => ({
@@ -207,7 +208,7 @@ async function runConcurrencyInventoryTestSuite() {
                 }),
             },
         },
-    };
+    } as unknown as InventoryExecutor;
 
     const noTrackRes = await reserveVariantInventory({
         variantId: varId1,
@@ -220,7 +221,7 @@ async function runConcurrencyInventoryTestSuite() {
 
     // 7. Test Release Inventory (Restoration / Cancellation)
     let discreteRestocked = 6;
-    const mockReleaseExecutor: any = {
+    const mockReleaseExecutor = {
         query: {
             productVariantsTable: {
                 findFirst: async () => ({
@@ -244,7 +245,7 @@ async function runConcurrencyInventoryTestSuite() {
                 }),
             }),
         }),
-    };
+    } as unknown as InventoryExecutor;
 
     const releaseRes = await releaseVariantInventory({
         variantId: varId1,
@@ -262,8 +263,8 @@ async function runConcurrencyInventoryTestSuite() {
             quantity: -1,
             executor: mockDiscreteExecutor,
         });
-    } catch (err: any) {
-        if (err instanceof BadRequestError || err?.statusCode === 400) {
+    } catch (err: unknown) {
+        if (err instanceof BadRequestError || (err instanceof Error && "statusCode" in err && err.statusCode === 400)) {
             invalidQtyThrew = true;
         }
     }
@@ -271,7 +272,7 @@ async function runConcurrencyInventoryTestSuite() {
 
     // 9. Test Batch Cart Reservation
     let batchStock = 10;
-    const mockBatchExecutor: any = {
+    const mockBatchExecutor = {
         query: {
             productVariantsTable: {
                 findFirst: async () => ({
@@ -305,7 +306,7 @@ async function runConcurrencyInventoryTestSuite() {
                 }),
             }),
         }),
-    };
+    } as unknown as InventoryExecutor;
 
     const batchRes = await reserveCartInventory(
         [

@@ -6,6 +6,7 @@ import {
     getVariantCheckoutSnapshot,
     getVariantCheckoutSnapshots,
 } from "@/features/products/actions";
+import type { InventoryExecutor } from "@/features/products/inventory";
 import { NotFoundError } from "@/lib/error";
 
 async function runCheckoutSnapshotTestSuite() {
@@ -143,15 +144,15 @@ async function runCheckoutSnapshotTestSuite() {
         },
     ];
 
-    const mockExecutor: any = {
+    const mockExecutor = {
         query: {
             productVariantsTable: {
-                findMany: async ({ where }: any) => {
+                findMany: async () => {
                     return mockDbData;
                 },
             },
         },
-    };
+    } as unknown as InventoryExecutor;
 
     // 3. Test getVariantCheckoutSnapshots with mock executor
     const snapshots = await getVariantCheckoutSnapshots(
@@ -185,13 +186,13 @@ async function runCheckoutSnapshotTestSuite() {
     console.assert(snap3.isPurchasable === true, "No tracking item is purchasable");
 
     // 4. Test Single getVariantCheckoutSnapshot resolver
-    const singleMockExecutor: any = {
+    const singleMockExecutor = {
         query: {
             productVariantsTable: {
                 findMany: async () => [mockDbData[0]],
             },
         },
-    };
+    } as unknown as InventoryExecutor;
     const singleSnap = await getVariantCheckoutSnapshot(validId1, { executor: singleMockExecutor });
     console.assert(singleSnap.variantId === validId1, "Single snapshot resolver returned correct variant");
     console.assert(singleSnap.sku === "premium-hoodie-m-black", "SKU matched");
@@ -210,7 +211,7 @@ async function runCheckoutSnapshotTestSuite() {
     console.assert(quantityFailingSnap.isPurchasable === false, "Not purchasable when requestedQty > availableStock");
 
     // 6. Test Inactive / Unpurchasable variant
-    const inactiveMockExecutor: any = {
+    const inactiveMockExecutor = {
         query: {
             productVariantsTable: {
                 findMany: async () => [
@@ -221,13 +222,13 @@ async function runCheckoutSnapshotTestSuite() {
                 ],
             },
         },
-    };
+    } as unknown as InventoryExecutor;
     const inactiveSnap = await getVariantCheckoutSnapshot(validId1, { executor: inactiveMockExecutor });
     console.assert(inactiveSnap.isPurchasable === false, "Inactive variant is not purchasable");
     console.assert(inactiveSnap.isActive === false, "isActive is false in snapshot");
 
     // 7. Test Draft / Unreleased product
-    const draftMockExecutor: any = {
+    const draftMockExecutor = {
         query: {
             productVariantsTable: {
                 findMany: async () => [
@@ -241,18 +242,18 @@ async function runCheckoutSnapshotTestSuite() {
                 ],
             },
         },
-    };
+    } as unknown as InventoryExecutor;
     const draftSnap = await getVariantCheckoutSnapshot(validId1, { executor: draftMockExecutor });
     console.assert(draftSnap.isPurchasable === false, "Draft product variant is not purchasable");
 
     // 8. Test NotFoundError when variant does not exist
-    const emptyMockExecutor: any = {
+    const emptyMockExecutor = {
         query: {
             productVariantsTable: {
                 findMany: async () => [],
             },
         },
-    };
+    } as unknown as InventoryExecutor;
     let notFoundThrew = false;
     try {
         await getVariantCheckoutSnapshot("00000000-0000-0000-0000-000000000000", { executor: emptyMockExecutor });
