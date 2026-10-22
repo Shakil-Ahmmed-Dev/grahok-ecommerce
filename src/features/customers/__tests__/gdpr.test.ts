@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { extractClientNetworkMeta, sanitizeAuditChanges } from "@/features/customers/audit";
 import {
     CustomerAnonymizeInputSchema,
@@ -19,16 +20,16 @@ async function runGdprTestSuite() {
     const validOAuthInput = CustomerAnonymizeInputSchema.parse({
         confirmationText: "DELETE MY ACCOUNT",
     });
-    console.assert(validOAuthInput.confirmationText === "DELETE MY ACCOUNT", "Valid OAuth anonymize confirmation");
-    console.assert(validOAuthInput.password === undefined, "Password is optional");
+    assert(validOAuthInput.confirmationText === "DELETE MY ACCOUNT", "Valid OAuth anonymize confirmation");
+    assert(validOAuthInput.password === undefined, "Password is optional");
 
     // Valid credential confirmation with password
     const validCredentialInput = CustomerAnonymizeInputSchema.parse({
         password: "SuperSecretPassword123!",
         confirmationText: "DELETE MY ACCOUNT",
     });
-    console.assert(validCredentialInput.password === "SuperSecretPassword123!", "Password parsed correctly");
-    console.assert(validCredentialInput.confirmationText === "DELETE MY ACCOUNT", "Confirmation text matches");
+    assert(validCredentialInput.password === "SuperSecretPassword123!", "Password parsed correctly");
+    assert(validCredentialInput.confirmationText === "DELETE MY ACCOUNT", "Confirmation text matches");
 
     // Invalid confirmation strings should throw
     const invalidConfirmations = [
@@ -49,7 +50,7 @@ async function runGdprTestSuite() {
         } catch {
             threw = true;
         }
-        console.assert(threw, `Expected rejection of invalid confirmation text: "${badText}"`);
+        assert(threw, `Expected rejection of invalid confirmation text: "${badText}"`);
     }
 
     // Missing confirmationText should throw
@@ -59,7 +60,7 @@ async function runGdprTestSuite() {
     } catch {
         missingConfirmedThrew = true;
     }
-    console.assert(missingConfirmedThrew, "Rejects empty object without confirmationText");
+    assert(missingConfirmedThrew, "Rejects empty object without confirmationText");
 
     // -------------------------------------------------------------
     // 2. Sensitive Data Sanitization in Audit Logging
@@ -80,15 +81,15 @@ async function runGdprTestSuite() {
     };
 
     const sanitized = sanitizeAuditChanges(rawChanges);
-    console.assert(sanitized.password === "[REDACTED]", "Redacts root password field");
-    console.assert(sanitized.secretToken === "[REDACTED]", "Redacts root secretToken field");
-    console.assert(sanitized.safeNumber === 42, "Preserves safeNumber");
-    console.assert(sanitized.safeBool === true, "Preserves safeBool");
+    assert(sanitized.password === "[REDACTED]", "Redacts root password field");
+    assert(sanitized.secretToken === "[REDACTED]", "Redacts root secretToken field");
+    assert(sanitized.safeNumber === 42, "Preserves safeNumber");
+    assert(sanitized.safeBool === true, "Preserves safeBool");
 
     const nestedSanitized = sanitized.nested as Record<string, unknown>;
-    console.assert(nestedSanitized.userToken === "[REDACTED]", "Redacts nested userToken");
-    console.assert(nestedSanitized.creditCardNumber === "[REDACTED]", "Redacts nested creditCardNumber");
-    console.assert(nestedSanitized.email === "test@example.com", "Preserves safe nested email");
+    assert(nestedSanitized.userToken === "[REDACTED]", "Redacts nested userToken");
+    assert(nestedSanitized.creditCardNumber === "[REDACTED]", "Redacts nested creditCardNumber");
+    assert(nestedSanitized.email === "test@example.com", "Preserves safe nested email");
 
     // -------------------------------------------------------------
     // 3. Network Metadata Extraction from Headers
@@ -101,8 +102,8 @@ async function runGdprTestSuite() {
     });
 
     const meta1 = extractClientNetworkMeta(headersWithForwarded);
-    console.assert(meta1.ipAddress === "203.0.113.195", "Extracts primary IP from x-forwarded-for");
-    console.assert(meta1.userAgent?.includes("Mozilla"), "Extracts User Agent from headers");
+    assert(meta1.ipAddress === "203.0.113.195", "Extracts primary IP from x-forwarded-for");
+    assert(meta1.userAgent?.includes("Mozilla"), "Extracts User Agent from headers");
 
     const headersWithRealIp = new Headers({
         "x-real-ip": "198.51.100.1",
@@ -110,11 +111,11 @@ async function runGdprTestSuite() {
     });
 
     const meta2 = extractClientNetworkMeta(headersWithRealIp);
-    console.assert(meta2.ipAddress === "198.51.100.1", "Extracts IP from x-real-ip fallback");
-    console.assert(meta2.userAgent === "GrahoK-Mobile/1.0", "Extracts custom mobile user-agent");
+    assert(meta2.ipAddress === "198.51.100.1", "Extracts IP from x-real-ip fallback");
+    assert(meta2.userAgent === "GrahoK-Mobile/1.0", "Extracts custom mobile user-agent");
 
     const emptyMeta = extractClientNetworkMeta(undefined);
-    console.assert(emptyMeta.ipAddress === null && emptyMeta.userAgent === null, "Handles undefined headers safely");
+    assert(emptyMeta.ipAddress === null && emptyMeta.userAgent === null, "Handles undefined headers safely");
 
     // -------------------------------------------------------------
     // 4. CustomerAuditLogListQuerySchema validation & defaults
@@ -122,15 +123,15 @@ async function runGdprTestSuite() {
     console.log("-> 4. Testing CustomerAuditLogListQuerySchema");
 
     const defaultQuery = CustomerAuditLogListQuerySchema.parse({});
-    console.assert(defaultQuery.page === 1, "Default page is 1");
-    console.assert(defaultQuery.limit === 20, "Default limit is 20");
+    assert(defaultQuery.page === 1, "Default page is 1");
+    assert(defaultQuery.limit === 20, "Default limit is 20");
 
     const explicitQuery = CustomerAuditLogListQuerySchema.parse({
         page: "3",
         limit: "50",
     });
-    console.assert(explicitQuery.page === 3, "Coerces page string to number");
-    console.assert(explicitQuery.limit === 50, "Coerces limit string to number");
+    assert(explicitQuery.page === 3, "Coerces page string to number");
+    assert(explicitQuery.limit === 50, "Coerces limit string to number");
 
     let badLimitThrew = false;
     try {
@@ -138,7 +139,7 @@ async function runGdprTestSuite() {
     } catch {
         badLimitThrew = true;
     }
-    console.assert(badLimitThrew, "Rejects limit exceeding 100");
+    assert(badLimitThrew, "Rejects limit exceeding 100");
 
     // -------------------------------------------------------------
     // 5. GDPR Right to Data Portability Export Schema Formatting
@@ -185,10 +186,10 @@ async function runGdprTestSuite() {
     };
 
     const validatedExport = CustomerDataExportSchema.parse(exportObject);
-    console.assert(validatedExport.exportVersion === "1.0", "Export version is 1.0");
-    console.assert(validatedExport.customer.email === "alice@example.com", "Customer email matches in export");
-    console.assert(validatedExport.auditLogs.length === 1, "Audit logs included in export");
-    console.assert(validatedExport.auditLogs[0]?.action === "profile_updated", "Audit log action preserved in export");
+    assert(validatedExport.exportVersion === "1.0", "Export version is 1.0");
+    assert(validatedExport.customer.email === "alice@example.com", "Customer email matches in export");
+    assert(validatedExport.auditLogs.length === 1, "Audit logs included in export");
+    assert(validatedExport.auditLogs[0]?.action === "profile_updated", "Audit log action preserved in export");
 
     console.log("✔ All GDPR and Security Audit Logging unit tests passed successfully! 🛡️");
 }

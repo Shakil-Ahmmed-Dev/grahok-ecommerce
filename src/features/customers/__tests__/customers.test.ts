@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import {
     buildAtomicDefaultAddressSql,
 } from "@/features/customers/actions";
@@ -30,9 +31,9 @@ async function runCustomersTestSuite() {
 
     for (const { input, expected } of rawInputs) {
         const sanitized = sanitizePhoneNumber(input);
-        console.assert(sanitized === expected, `Sanitizer failed for ${input}: got ${sanitized}`);
+        assert(sanitized === expected, `Sanitizer failed for ${input}: got ${sanitized}`);
         const parsed = PhoneSchema.parse(input);
-        console.assert(parsed === expected, `PhoneSchema parse failed for ${input}: got ${parsed}`);
+        assert(parsed === expected, `PhoneSchema parse failed for ${input}: got ${parsed}`);
     }
 
     const invalidPhones = [
@@ -50,7 +51,7 @@ async function runCustomersTestSuite() {
         } catch {
             threw = true;
         }
-        console.assert(threw, `Expected PhoneSchema to reject invalid phone: ${bad}`);
+        assert(threw, `Expected PhoneSchema to reject invalid phone: ${bad}`);
     }
 
     // -------------------------------------------------------------
@@ -67,11 +68,11 @@ async function runCustomersTestSuite() {
     };
 
     const parsedAddress = CreateCustomerAddressSchema.parse(validAddressInput);
-    console.assert(parsedAddress.countryCode === "US", "Country code normalized to uppercase US");
-    console.assert(parsedAddress.phone === "+15551234567", "Phone parsed and formatted to E.164");
-    console.assert(parsedAddress.addressType === "both", "Default address type is 'both'");
-    console.assert(parsedAddress.isDefaultShipping === false, "Default isDefaultShipping is false");
-    console.assert(parsedAddress.isDefaultBilling === false, "Default isDefaultBilling is false");
+    assert(parsedAddress.countryCode === "US", "Country code normalized to uppercase US");
+    assert(parsedAddress.phone === "+15551234567", "Phone parsed and formatted to E.164");
+    assert(parsedAddress.addressType === "both", "Default address type is 'both'");
+    assert(parsedAddress.isDefaultShipping === false, "Default isDefaultShipping is false");
+    assert(parsedAddress.isDefaultBilling === false, "Default isDefaultBilling is false");
 
     // Invalid country code (not 2 uppercase letters)
     let badCountryThrew = false;
@@ -83,10 +84,10 @@ async function runCustomersTestSuite() {
     } catch {
         badCountryThrew = true;
     }
-    console.assert(badCountryThrew, "Rejects 3-letter country code USA");
+    assert(badCountryThrew, "Rejects 3-letter country code USA");
 
     // Address quota constant
-    console.assert(MAX_CUSTOMER_ADDRESSES === 25, "Address quota guard is set to 25");
+    assert(MAX_CUSTOMER_ADDRESSES === 25, "Address quota guard is set to 25");
 
     // -------------------------------------------------------------
     // 3. Update schemas (partial updates)
@@ -95,7 +96,7 @@ async function runCustomersTestSuite() {
     const partialAddress = UpdateCustomerAddressSchema.parse({
         recipientName: "Alice New Name",
     });
-    console.assert(partialAddress.recipientName === "Alice New Name", "Partial address update works");
+    assert(partialAddress.recipientName === "Alice New Name", "Partial address update works");
 
     const validProfileUpdate = UpdateCustomerProfileSchema.parse({
         firstName: "Jane",
@@ -103,8 +104,8 @@ async function runCustomersTestSuite() {
         phone: "+1 800 555 0199",
         avatarUrl: "https://example.com/avatar.png",
     });
-    console.assert(validProfileUpdate.firstName === "Jane", "Profile update parsed firstName");
-    console.assert(validProfileUpdate.phone === "+18005550199", "Profile update parsed phone");
+    assert(validProfileUpdate.firstName === "Jane", "Profile update parsed firstName");
+    assert(validProfileUpdate.phone === "+18005550199", "Profile update parsed phone");
 
     // -------------------------------------------------------------
     // 4. DTO Separation (Public Profile vs Admin Detail)
@@ -136,16 +137,16 @@ async function runCustomersTestSuite() {
 
     const publicDto = CustomerPublicProfileSchema.parse(sampleDbCustomer);
     // Sensitive fields should not exist in public profile schema shape
-    console.assert(!("riskScore" in publicDto), "Public DTO does NOT contain riskScore");
-    console.assert(!("adminNotes" in publicDto), "Public DTO does NOT contain adminNotes");
-    console.assert(!("isAnonymized" in publicDto), "Public DTO does NOT contain isAnonymized");
-    console.assert(publicDto.email === "customer@example.com", "Public DTO contains customer email");
+    assert(!("riskScore" in publicDto), "Public DTO does NOT contain riskScore");
+    assert(!("adminNotes" in publicDto), "Public DTO does NOT contain adminNotes");
+    assert(!("isAnonymized" in publicDto), "Public DTO does NOT contain isAnonymized");
+    assert(publicDto.email === "customer@example.com", "Public DTO contains customer email");
 
     const adminDto = CustomerAdminDetailSchema.parse(sampleDbCustomer);
-    console.assert(adminDto.riskScore === 42, "Admin DTO preserves riskScore");
-    console.assert(adminDto.adminNotes === "VIP customer - handle with care", "Admin DTO preserves adminNotes");
-    console.assert(adminDto.isAnonymized === false, "Admin DTO preserves isAnonymized");
-    console.assert(adminDto.tags[0] === "vip", "Admin DTO preserves tags");
+    assert(adminDto.riskScore === 42, "Admin DTO preserves riskScore");
+    assert(adminDto.adminNotes === "VIP customer - handle with care", "Admin DTO preserves adminNotes");
+    assert(adminDto.isAnonymized === false, "Admin DTO preserves isAnonymized");
+    assert(adminDto.tags[0] === "vip", "Admin DTO preserves tags");
 
     // -------------------------------------------------------------
     // 5. Atomic Default Address Swap SQL Construction
@@ -157,30 +158,30 @@ async function runCustomersTestSuite() {
     const shippingSqlObj = buildAtomicDefaultAddressSql(testCustomerId, testAddressId, "is_default_shipping");
     const shippingQuery = dialect.sqlToQuery(shippingSqlObj);
 
-    console.assert(
+    assert(
         shippingQuery.sql.includes("UPDATE customer_addresses"),
         "Shipping query updates customer_addresses table"
     );
-    console.assert(
+    assert(
         shippingQuery.sql.includes("SET is_default_shipping = (id ="),
         "Shipping query uses CASE boolean equality (id = target)"
     );
-    console.assert(
+    assert(
         shippingQuery.sql.includes("WHERE customer_id ="),
         "Shipping query filters by customer_id"
     );
-    console.assert(
+    assert(
         shippingQuery.sql.includes("is_default_shipping = true"),
         "Shipping query resets previous default in single atomic statement"
     );
-    console.assert(
+    assert(
         shippingQuery.sql.includes("deleted_at IS NULL"),
         "Shipping query respects soft delete"
     );
 
     const billingSqlObj = buildAtomicDefaultAddressSql(testCustomerId, testAddressId, "is_default_billing");
     const billingQuery = dialect.sqlToQuery(billingSqlObj);
-    console.assert(
+    assert(
         billingQuery.sql.includes("SET is_default_billing = (id ="),
         "Billing query uses CASE boolean equality (id = target)"
     );
