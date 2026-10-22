@@ -329,6 +329,7 @@ export type TProductCategoryItem = z.infer<typeof ProductCategoryItemSchema>;
 export const ProductModelSchema = createSelectSchema(productsTable, {
     inventoryType: InventoryTypeSchema.default(InventoryTypeSchema.enum.discrete),
     allowBackorder: z.boolean().default(false).optional(),
+    stock: z.coerce.number().nonnegative().default(0),
     poolStock: z.coerce.number().nonnegative().default(0),
     weight: z.number().nullable().optional(),
     packageLength: z.number().nullable().optional(),

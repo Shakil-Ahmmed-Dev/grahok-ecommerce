@@ -1437,7 +1437,7 @@ export const getRelatedProducts = async (slug: TProductSlug, limit: number = 8):
         ? sql`COALESCE((
             SELECT SUM(CASE WHEN pc.category_id = ${primaryCategoryId} THEN 5 ELSE 3 END)
             FROM ${productCategoriesTable} pc
-            WHERE pc.product_id = ${productsTable.id} AND pc.category_id = ANY(${categoryIds})
+            WHERE pc.product_id = ${productsTable.id} AND pc.category_id IN (${sql.join(categoryIds.map((id) => sql`${id}`), sql`, `)})
           ), 0)`
         : sql`0`;
 
@@ -1445,7 +1445,7 @@ export const getRelatedProducts = async (slug: TProductSlug, limit: number = 8):
         ? sql`COALESCE((
             SELECT count(*)::int
             FROM jsonb_array_elements_text(coalesce(${productsTable.tags}, '[]'::jsonb)) t
-            WHERE t = ANY(${tags})
+            WHERE t IN (${sql.join(tags.map((t) => sql`${t}`), sql`, `)})
           ), 0)`
         : sql`0`;
 
