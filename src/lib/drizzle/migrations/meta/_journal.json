@@ -162,6 +162,13 @@
       "when": 1792325817298,
       "tag": "0022_great_saracen",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792731601211,
+      "tag": "0023_clever_quasar",
+      "breakpoints": true
     }
   ]
 }

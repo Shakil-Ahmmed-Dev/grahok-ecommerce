@@ -10,6 +10,11 @@ export const RATE_LIMIT_TIERS = {
         limit: 10,
         windowSeconds: 60,
     },
+    checkout: {
+        name: "checkout",
+        limit: 20,
+        windowSeconds: 60,
+    },
     products: {
         name: "products",
         limit: 60,
@@ -30,6 +35,9 @@ export const RATE_LIMIT_TIERS = {
 export const getRateLimitTier = (pathname: string): RateLimitTier => {
     if (pathname.startsWith("/api/v1/auth")) {
         return RATE_LIMIT_TIERS.auth;
+    }
+    if (pathname.startsWith("/api/v1/checkout")) {
+        return RATE_LIMIT_TIERS.checkout;
     }
     if (pathname.startsWith("/api/v1/admin")) {
         return RATE_LIMIT_TIERS.admin;

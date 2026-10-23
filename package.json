@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:customers": "tsx src/features/customers/__tests__/customers.test.ts && tsx src/features/customers/__tests__/gdpr.test.ts",
+    "test:checkout": "tsx src/features/checkout/__tests__/checkout.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

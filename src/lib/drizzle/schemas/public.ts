@@ -1,5 +1,5 @@
 import { INVENTORY_TYPES, PRODUCT_STATUSES } from "@/features/products/constants";
-import type { TProductImages, TProductTags } from "@/features/products/types";
+import type { TProductImages, TProductTags, TVariantCheckoutSnapshot } from "@/features/products/types";
 import { user } from "@/lib/drizzle/schemas/auth";
 import { randomUUID } from "crypto";
 import { relations, sql, type SQL } from "drizzle-orm";
@@ -48,8 +48,54 @@ export const CUSTOMER_AUDIT_ACTIONS = [
     "data_exported",
     "admin_note_added",
     "risk_score_adjusted",
+    "order_placed",
+    "order_cancelled",
 ] as const;
 export type TCustomerAuditAction = (typeof CUSTOMER_AUDIT_ACTIONS)[number];
+
+/* ==========================================================================
+   Order & Checkout Enums & Types
+   ========================================================================== */
+
+export const ORDER_STATUSES = [
+    "pending",
+    "processing",
+    "shipped",
+    "delivered",
+    "cancelled",
+    "refunded",
+] as const;
+export type TOrderStatus = (typeof ORDER_STATUSES)[number];
+export const orderStatusEnum = pgEnum("order_status", ORDER_STATUSES);
+
+export const PAYMENT_STATUSES = ["pending", "paid", "failed", "refunded"] as const;
+export type TPaymentStatus = (typeof PAYMENT_STATUSES)[number];
+export const paymentStatusEnum = pgEnum("payment_status", PAYMENT_STATUSES);
+
+export const PAYMENT_METHODS = ["cod", "card", "manual"] as const;
+export type TPaymentMethod = (typeof PAYMENT_METHODS)[number];
+export const paymentMethodEnum = pgEnum("payment_method", PAYMENT_METHODS);
+
+export interface TCheckoutAddressSnapshot {
+    recipientName: string;
+    company?: string | null;
+    phone: string;
+    addressLine1: string;
+    addressLine2?: string | null;
+    city: string;
+    state?: string | null;
+    postalCode: string;
+    countryCode: string;
+}
+
+export interface TConsignmentLogisticsSnapshot {
+    totalActualWeight: number;
+    totalVolumeCm3: number;
+    aggregateVolumetricWeight: number;
+    chargeableWeight: number;
+    pieceChargeableWeight: number;
+    hasPhysicalGoods: boolean;
+}
 
 /* ==========================================================================
    Product Enums & Types
@@ -399,6 +445,81 @@ export const productSlugRedirectsTable = pgTable("product_slug_redirects", {
 ]);
 
 /* ==========================================================================
+   Order & Checkout Tables
+   ========================================================================== */
+
+export const ordersTable = pgTable(
+    "orders",
+    {
+        id: uuid().primaryKey().$default(randomUUID),
+        orderNumber: text("order_number").notNull().unique(),
+        customerId: uuid("customer_id").references(() => customersTable.id, { onDelete: "set null" }),
+        customerType: customerTypeEnum("customer_type").notNull().default("registered"),
+        customerEmail: text("customer_email").notNull(),
+        customerName: text("customer_name"),
+        customerPhone: text("customer_phone"),
+        status: orderStatusEnum("status").notNull().default("pending"),
+        paymentStatus: paymentStatusEnum("payment_status").notNull().default("pending"),
+        paymentMethod: paymentMethodEnum("payment_method").notNull().default("cod"),
+        currency: text("currency").notNull().default("USD"),
+        subtotal: numeric("subtotal", { scale: 2 }).notNull(),
+        shippingFee: numeric("shipping_fee", { scale: 2 }).notNull().default("0.00"),
+        tax: numeric("tax", { scale: 2 }).notNull().default("0.00"),
+        discount: numeric("discount", { scale: 2 }).notNull().default("0.00"),
+        totalAmount: numeric("total_amount", { scale: 2 }).notNull(),
+        shippingAddress: jsonb("shipping_address").$type<TCheckoutAddressSnapshot>().notNull(),
+        billingAddress: jsonb("billing_address").$type<TCheckoutAddressSnapshot>().notNull(),
+        logistics: jsonb("logistics").$type<TConsignmentLogisticsSnapshot>(),
+        notes: text("notes"),
+        metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+        cancelledAt: timestamp("cancelled_at"),
+        paidAt: timestamp("paid_at"),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+        updatedAt: timestamp("updated_at")
+            .defaultNow()
+            .$onUpdate(() => /* @__PURE__ */ new Date())
+            .notNull(),
+    },
+    (table) => [
+        index("orders_customer_id_idx").on(table.customerId),
+        index("orders_order_number_idx").on(table.orderNumber),
+        index("orders_customer_email_idx").on(table.customerEmail),
+        index("orders_status_idx").on(table.status),
+        index("orders_created_at_idx").on(table.createdAt),
+    ]
+);
+
+export const orderItemsTable = pgTable(
+    "order_items",
+    {
+        id: uuid().primaryKey().$default(randomUUID),
+        orderId: uuid("order_id")
+            .notNull()
+            .references(() => ordersTable.id, { onDelete: "cascade" }),
+        productId: uuid("product_id").references(() => productsTable.id, { onDelete: "set null" }),
+        variantId: uuid("variant_id").references(() => productVariantsTable.id, { onDelete: "set null" }),
+        title: text("title").notNull(),
+        variantTitle: text("variant_title").notNull(),
+        sku: text("sku").notNull(),
+        slug: text("slug"),
+        imageUrl: text("image_url"),
+        unitPrice: numeric("unit_price", { scale: 2 }).notNull(),
+        quantity: integer("quantity").notNull(),
+        totalPrice: numeric("total_price", { scale: 2 }).notNull(),
+        weight: numeric("weight", { precision: 10, scale: 3, mode: "number" }),
+        isBackordered: boolean("is_backordered").notNull().default(false),
+        snapshot: jsonb("snapshot").$type<TVariantCheckoutSnapshot>(),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+    },
+    (table) => [
+        index("order_items_order_id_idx").on(table.orderId),
+        index("order_items_product_id_idx").on(table.productId),
+        index("order_items_variant_id_idx").on(table.variantId),
+        index("order_items_sku_idx").on(table.sku),
+    ]
+);
+
+/* ==========================================================================
    Relations
    ========================================================================== */
 
@@ -409,6 +530,7 @@ export const customersRelations = relations(customersTable, ({ one, many }) => (
     }),
     addresses: many(customerAddressesTable),
     auditLogs: many(customerAuditLogsTable),
+    orders: many(ordersTable),
 }));
 
 export const customerAddressesRelations = relations(customerAddressesTable, ({ one }) => ({
@@ -497,5 +619,28 @@ export const productCategoriesRelations = relations(productCategoriesTable, ({ o
     category: one(categoriesTable, {
         fields: [productCategoriesTable.categoryId],
         references: [categoriesTable.id],
+    }),
+}));
+
+export const ordersRelations = relations(ordersTable, ({ one, many }) => ({
+    customer: one(customersTable, {
+        fields: [ordersTable.customerId],
+        references: [customersTable.id],
+    }),
+    items: many(orderItemsTable),
+}));
+
+export const orderItemsRelations = relations(orderItemsTable, ({ one }) => ({
+    order: one(ordersTable, {
+        fields: [orderItemsTable.orderId],
+        references: [ordersTable.id],
+    }),
+    product: one(productsTable, {
+        fields: [orderItemsTable.productId],
+        references: [productsTable.id],
+    }),
+    variant: one(productVariantsTable, {
+        fields: [orderItemsTable.variantId],
+        references: [productVariantsTable.id],
     }),
 }));

@@ -1,7 +1,7 @@
 import { db } from "@/lib/drizzle";
-import { customerAddressesTable, customerAuditLogsTable, customersTable, type TCustomerAuditAction } from "@/lib/drizzle/schemas/public";
+import { customerAddressesTable, customerAuditLogsTable, customersTable, ordersTable, type TCustomerAuditAction } from "@/lib/drizzle/schemas/public";
 import { BadRequestError, NotFoundError, ServiceUnavailableError } from "@/lib/error";
-import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { recordCustomerAuditLog } from "./audit";
 import {
     assertCustomerSelfServiceAccess,
@@ -809,9 +809,14 @@ export async function updateCustomerAdmin(
  */
 export async function checkActiveCustomerOrders(customerId: string): Promise<boolean> {
     if (!customerId) return false;
-    // Orders table integration: when orders table is present,
-    // query active orders (e.g. status in ['pending', 'processing', 'shipped']).
-    return false;
+    const activeOrder = await db.query.ordersTable.findFirst({
+        where: and(
+            eq(ordersTable.customerId, customerId),
+            inArray(ordersTable.status, ['pending', 'processing', 'shipped'])
+        ),
+        columns: { id: true },
+    });
+    return Boolean(activeOrder);
 }
 
 /**
