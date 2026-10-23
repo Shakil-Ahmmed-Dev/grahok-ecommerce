@@ -169,6 +169,13 @@
       "when": 1792731601211,
       "tag": "0023_clever_quasar",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792735278099,
+      "tag": "0024_worried_risque",
+      "breakpoints": true
     }
   ]
 }

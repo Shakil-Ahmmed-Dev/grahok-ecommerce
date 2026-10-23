@@ -154,6 +154,7 @@ export const OrderDTOSchema = z.object({
     logistics: z.record(z.string(), z.unknown()).nullable().optional(),
     notes: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).default({}),
+    guestAccessToken: z.string().nullable().optional(),
     cancelledAt: z.coerce.date().nullable().optional(),
     paidAt: z.coerce.date().nullable().optional(),
     createdAt: z.coerce.date(),

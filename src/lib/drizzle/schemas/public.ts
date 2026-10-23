@@ -472,6 +472,7 @@ export const ordersTable = pgTable(
         logistics: jsonb("logistics").$type<TConsignmentLogisticsSnapshot>(),
         notes: text("notes"),
         metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+        guestAccessTokenHash: text("guest_access_token_hash"),
         cancelledAt: timestamp("cancelled_at"),
         paidAt: timestamp("paid_at"),
         createdAt: timestamp("created_at").defaultNow().notNull(),

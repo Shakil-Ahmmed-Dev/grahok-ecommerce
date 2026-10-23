@@ -183,6 +183,8 @@ async function runCheckoutTestSuite() {
     assert.equal(guestOrder.status, "pending");
     assert.equal(guestOrder.items?.length, 1);
     assert.equal(guestOrder.items?.[0]?.variantId, variant.id);
+    assert(guestOrder.guestAccessToken, "Guest order must return high-entropy guestAccessToken");
+    assert.equal(guestOrder.guestAccessToken?.length, 64, "Token should be 32 bytes hex (64 chars)");
 
     // 4c. Verify stock decrement
     const updatedVariant = await db.query.productVariantsTable.findFirst({
@@ -192,15 +194,19 @@ async function runCheckoutTestSuite() {
         assert.equal(Number(updatedVariant?.stock), initialVariantStock - 1);
     }
 
-    // 4d. Retrieve Order with Guest Email verification
+    // 4d. Retrieve Order with Cryptographic Guest Access Token
     const fetchedOrder = await checkoutActions.getOrderById(guestOrder.id, {
-        customerEmail: "guest.checkout.test@example.com",
+        guestAccessToken: guestOrder.guestAccessToken,
     });
     assert.equal(fetchedOrder.id, guestOrder.id);
 
-    // Unauthorized access should be blocked
+    // Insecure access with invalid token or email alone must be rejected
     await assert.rejects(
-        () => checkoutActions.getOrderById(guestOrder.id, { customerEmail: "hacker@example.com" }),
+        () => checkoutActions.getOrderById(guestOrder.id, { guestAccessToken: "invalid-token-123456" }),
+        { name: "ForbiddenError" }
+    );
+    await assert.rejects(
+        () => checkoutActions.getOrderById(guestOrder.id, {}),
         { name: "ForbiddenError" }
     );
 
@@ -247,9 +253,9 @@ async function runCheckoutTestSuite() {
     const badEstimateRes = await estimatePost(badEstimateReq);
     assert.equal(badEstimateRes.status, 400);
 
-    // 5c. GET /api/v1/checkout/[orderId] (guest tracking)
+    // 5c. GET /api/v1/checkout/[orderId] (guest tracking with valid token)
     const getOrderReq = new Request(
-        `http://localhost:3000/api/v1/checkout/${guestOrder.id}?email=guest.checkout.test@example.com`
+        `http://localhost:3000/api/v1/checkout/${guestOrder.id}?token=${guestOrder.guestAccessToken}`
     );
     const getOrderRes = await orderGet(getOrderReq, {
         params: Promise.resolve({ orderId: guestOrder.id }),
@@ -257,17 +263,18 @@ async function runCheckoutTestSuite() {
     assert.equal(getOrderRes.status, 200);
     const getOrderJson = await getOrderRes.json();
     assert.equal(getOrderJson.id, guestOrder.id);
+    assert.equal(getOrderJson.guestAccessToken, undefined, "Token hash/plain token must not be leaked on subsequent gets");
 
-    // 5d. GET /api/v1/checkout/[orderId] (unauthorized access without email or session)
+    // 5d. GET /api/v1/checkout/[orderId] (unauthorized access with email query alone, without token)
     const unauthorizedReq = new Request(
-        `http://localhost:3000/api/v1/checkout/${guestOrder.id}`
+        `http://localhost:3000/api/v1/checkout/${guestOrder.id}?email=guest.checkout.test@example.com`
     );
     const unauthorizedRes = await orderGet(unauthorizedReq, {
         params: Promise.resolve({ orderId: guestOrder.id }),
     });
     assert.equal(unauthorizedRes.status, 403);
 
-    // 5e. POST /api/v1/checkout/[orderId]/cancel (unauthenticated cancellation)
+    // 5e. POST /api/v1/checkout/[orderId]/cancel (unauthenticated cancellation without session or token)
     const cancelReq = new Request(
         `http://localhost:3000/api/v1/checkout/${guestOrder.id}/cancel`,
         { method: "POST" }

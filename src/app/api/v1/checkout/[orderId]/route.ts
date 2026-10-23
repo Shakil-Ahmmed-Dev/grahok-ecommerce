@@ -14,12 +14,15 @@ export const GET = async (request: Request, { params }: RouteParams) => {
         const user = await authActions.getCurrentUser(request.headers);
 
         const url = new URL(request.url);
-        const guestEmail = url.searchParams.get("email");
+        const guestAccessToken =
+            url.searchParams.get("token") ??
+            request.headers.get("x-order-token") ??
+            undefined;
 
         const order = await checkoutActions.getOrderById(orderId, {
             authUserId: user?.id,
             isAdmin: user?.role === "admin",
-            customerEmail: guestEmail ?? undefined,
+            guestAccessToken,
         });
 
         return ok(order);

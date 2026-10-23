@@ -9,7 +9,7 @@ import {
 } from "@/lib/drizzle/schemas/public";
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "@/lib/error";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import customerActions from "@/features/customers/actions";
 import { recordCustomerAuditLog } from "@/features/customers/audit";
 import { assertCustomerSelfServiceAccess } from "@/features/customers/self-service-policy";
@@ -50,6 +50,32 @@ export function generateOrderNumber(): string {
     const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const randomHex = randomUUID().replace(/-/g, "").substring(0, 8).toUpperCase();
     return `ORD-${datePrefix}-${randomHex}`;
+}
+
+/**
+ * Generate a cryptographically secure random token and its SHA-256 hash for guest checkout access.
+ */
+export function generateGuestAccessToken(): { token: string; hash: string } {
+    const token = randomBytes(32).toString("hex");
+    const hash = hashGuestAccessToken(token);
+    return { token, hash };
+}
+
+/**
+ * Hash a guest access token using SHA-256.
+ */
+export function hashGuestAccessToken(token: string): string {
+    return createHash("sha256").update(token.trim()).digest("hex");
+}
+
+/**
+ * Constant-time comparison between provided plain token and stored SHA-256 hash.
+ */
+export function verifyGuestAccessToken(providedToken: string, storedHash: string): boolean {
+    if (!providedToken || !storedHash) return false;
+    const computedHash = hashGuestAccessToken(providedToken);
+    if (computedHash.length !== storedHash.length) return false;
+    return timingSafeEqual(Buffer.from(computedHash, "utf-8"), Buffer.from(storedHash, "utf-8"));
 }
 
 export interface CheckoutContext {
@@ -376,7 +402,16 @@ export async function processCheckout(
     // 6. Calculate Pricing
     const pricing = calculateCheckoutPricing(pricingItems);
 
-    // 7. Atomically Reserve Inventory (with automatic rollback on conflict)
+    // 7. Generate Cryptographic Guest Access Token (if guest)
+    let guestAccessToken: string | null = null;
+    let guestAccessTokenHash: string | null = null;
+    if (customerType === "guest") {
+        const generated = generateGuestAccessToken();
+        guestAccessToken = generated.token;
+        guestAccessTokenHash = generated.hash;
+    }
+
+    // 8. Reserve Inventory (with automatic compensation on conflict/failure)
     const reservedBatch: Array<{ variantId: string; quantity: number }> = [];
     const reservationResults = new Map<string, { isBackordered: boolean }>();
 
@@ -404,7 +439,7 @@ export async function processCheckout(
         throw reserveError;
     }
 
-    // 8. Create Order & Order Items
+    // 9. Create Order & Order Items
     const orderNumber = generateOrderNumber();
     const logisticsSnapshot: TConsignmentLogisticsSnapshot = {
         totalActualWeight: pricing.logistics.totalActualWeight,
@@ -415,33 +450,40 @@ export async function processCheckout(
         hasPhysicalGoods: pricing.logistics.hasPhysicalGoods,
     };
 
-    const [createdOrder] = await db
-        .insert(ordersTable)
-        .values({
-            orderNumber,
-            customerId,
-            customerType,
-            customerEmail,
-            customerName,
-            customerPhone,
-            status: "pending",
-            paymentStatus: "pending",
-            paymentMethod: validated.paymentMethod,
-            currency: pricing.currency,
-            subtotal: pricing.subtotal.toFixed(2),
-            shippingFee: pricing.shippingFee.toFixed(2),
-            tax: pricing.tax.toFixed(2),
-            discount: pricing.discount.toFixed(2),
-            totalAmount: pricing.totalAmount.toFixed(2),
-            shippingAddress: shippingAddressSnapshot as unknown as TCheckoutAddressSnapshot,
-            billingAddress: billingAddressSnapshot as unknown as TCheckoutAddressSnapshot,
-            logistics: logisticsSnapshot,
-            notes: validated.notes ?? null,
-            metadata: validated.metadata ?? {},
-        })
-        .returning();
+    let createdOrder: typeof ordersTable.$inferSelect;
+    try {
+        const [order] = await db
+            .insert(ordersTable)
+            .values({
+                orderNumber,
+                customerId,
+                customerType,
+                customerEmail,
+                customerName,
+                customerPhone,
+                status: "pending",
+                paymentStatus: "pending",
+                paymentMethod: validated.paymentMethod,
+                currency: pricing.currency,
+                subtotal: pricing.subtotal.toFixed(2),
+                shippingFee: pricing.shippingFee.toFixed(2),
+                tax: pricing.tax.toFixed(2),
+                discount: pricing.discount.toFixed(2),
+                totalAmount: pricing.totalAmount.toFixed(2),
+                shippingAddress: shippingAddressSnapshot as unknown as TCheckoutAddressSnapshot,
+                billingAddress: billingAddressSnapshot as unknown as TCheckoutAddressSnapshot,
+                logistics: logisticsSnapshot,
+                notes: validated.notes ?? null,
+                metadata: validated.metadata ?? {},
+                guestAccessTokenHash,
+            })
+            .returning();
 
-    if (!createdOrder) {
+        if (!order) {
+            throw new BadRequestError("Failed to record checkout order");
+        }
+        createdOrder = order;
+    } catch (orderInsertError) {
         // Release reserved inventory if order insertion failed
         for (const reserved of reservedBatch) {
             try {
@@ -450,10 +492,10 @@ export async function processCheckout(
                     quantity: reserved.quantity,
                 });
             } catch {
-                // Non-blocking
+                // Best-effort rollback
             }
         }
-        throw new BadRequestError("Failed to record checkout order");
+        throw orderInsertError;
     }
 
     // Insert order items
@@ -479,7 +521,24 @@ export async function processCheckout(
         };
     });
 
-    const createdItems = await db.insert(orderItemsTable).values(lineItemValues).returning();
+    let createdItems: Array<typeof orderItemsTable.$inferSelect>;
+    try {
+        createdItems = await db.insert(orderItemsTable).values(lineItemValues).returning();
+    } catch (itemsInsertError) {
+        // If order items fail, clean up order and release stock
+        try {
+            await db.delete(ordersTable).where(eq(ordersTable.id, createdOrder.id));
+            for (const reserved of reservedBatch) {
+                await releaseVariantInventory({
+                    variantId: reserved.variantId,
+                    quantity: reserved.quantity,
+                });
+            }
+        } catch {
+            // Best effort cleanup
+        }
+        throw itemsInsertError;
+    }
 
     // 9. Update Customer Statistics & Record Security Audit Log
     try {
@@ -514,6 +573,7 @@ export async function processCheckout(
 
     return OrderDTOSchema.parse({
         ...createdOrder,
+        guestAccessToken,
         items: createdItems,
     });
 }
@@ -523,13 +583,13 @@ export async function processCheckout(
  * Supports:
  * - Admin users (full access)
  * - Authenticated customers (must own the order)
- * - Guest customers (must provide matching guestEmail)
+ * - Guest customers (must present a valid cryptographic guestAccessToken)
  */
 export async function getOrderById(
     orderId: string,
     access?: {
         authUserId?: string;
-        customerEmail?: string;
+        guestAccessToken?: string;
         isAdmin?: boolean;
     }
 ): Promise<TOrderDTO> {
@@ -554,8 +614,9 @@ export async function getOrderById(
     }
 
     if (
-        access?.customerEmail &&
-        order.customerEmail.toLowerCase() === access.customerEmail.trim().toLowerCase()
+        access?.guestAccessToken &&
+        order.guestAccessTokenHash &&
+        verifyGuestAccessToken(access.guestAccessToken, order.guestAccessTokenHash)
     ) {
         return OrderDTOSchema.parse(order);
     }
@@ -570,6 +631,7 @@ export async function cancelOrder(
     orderId: string,
     access: {
         authUserId?: string;
+        guestAccessToken?: string;
         isAdmin?: boolean;
         reason?: string;
         clientIp?: string;
@@ -589,8 +651,14 @@ export async function cancelOrder(
     }
 
     // Ownership check
-    const isOwner = access.authUserId && order.customer?.authUserId === access.authUserId;
-    if (!access.isAdmin && !isOwner) {
+    const isAuthOwner = Boolean(access.authUserId && order.customer?.authUserId === access.authUserId);
+    const isGuestOwner = Boolean(
+        access.guestAccessToken &&
+        order.guestAccessTokenHash &&
+        verifyGuestAccessToken(access.guestAccessToken, order.guestAccessTokenHash)
+    );
+
+    if (!access.isAdmin && !isAuthOwner && !isGuestOwner) {
         throw new ForbiddenError("You are not authorized to cancel this order");
     }
 
@@ -600,6 +668,12 @@ export async function cancelOrder(
             `Cannot cancel order in '${order.status}' status. Only pending or processing orders may be cancelled.`
         );
     }
+
+    const updatedNotes = access.reason
+        ? order.notes
+            ? `${order.notes} | Cancellation Reason: ${access.reason}`
+            : `Cancellation Reason: ${access.reason}`
+        : order.notes;
 
     // 1. Release reserved inventory
     for (const item of order.items) {
@@ -616,12 +690,6 @@ export async function cancelOrder(
     }
 
     // 2. Update order
-    const updatedNotes = access.reason
-        ? order.notes
-            ? `${order.notes} | Cancellation Reason: ${access.reason}`
-            : `Cancellation Reason: ${access.reason}`
-        : order.notes;
-
     const [updatedOrder] = await db
         .update(ordersTable)
         .set({
@@ -631,6 +699,10 @@ export async function cancelOrder(
         })
         .where(eq(ordersTable.id, orderId))
         .returning();
+
+    if (!updatedOrder) {
+        throw new NotFoundError("Failed to update cancelled order");
+    }
 
     // 3. Reverse customer statistics if applicable
     if (order.customerId) {
@@ -723,6 +795,9 @@ const checkoutActions = {
     cancelOrder,
     listCustomerOrders,
     generateOrderNumber,
+    generateGuestAccessToken,
+    hashGuestAccessToken,
+    verifyGuestAccessToken,
 };
 
 export default checkoutActions;
