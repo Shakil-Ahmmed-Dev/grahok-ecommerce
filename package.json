@@ -14,6 +14,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/lib/drizzle/seed.ts",
+    "admin:promote": "tsx src/features/auth/promote-admin.ts",
     "auth:generate": "auth generate --config src/lib/better-auth/auth.ts --output src/lib/drizzle/schemas/auth.ts"
   },
   "dependencies": {

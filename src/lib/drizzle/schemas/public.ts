@@ -50,6 +50,7 @@ export const CUSTOMER_AUDIT_ACTIONS = [
     "risk_score_adjusted",
     "order_placed",
     "order_cancelled",
+    "order_status_updated",
 ] as const;
 export type TCustomerAuditAction = (typeof CUSTOMER_AUDIT_ACTIONS)[number];
 

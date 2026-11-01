@@ -83,59 +83,72 @@ export async function getOrCreateCustomer(
     });
 
     if (matchingCustomers.length > 0) {
-        if (matchingCustomers.length !== 1) {
+        if (matchingCustomers.length === 1) {
+            const existingByEmail = matchingCustomers[0]!;
+            const linkDecision = decideCustomerIdentityLink({
+                authUserId: existingByEmail.authUserId,
+                customerStatus: existingByEmail.status,
+                deletedAt: existingByEmail.deletedAt,
+                requesterAuthUserId: authUserId,
+                emailVerified,
+            });
+
+            if (linkDecision === "owned") {
+                return getCustomerProfile({ customerId: existingByEmail.id });
+            }
+
+            if (linkDecision === "claim") {
+                const [updated] = await db
+                    .update(customersTable)
+                    .set({
+                        authUserId,
+                        customerType: "registered",
+                        updatedAt: new Date(),
+                    })
+                    .where(buildCustomerIdentityLinkCondition(existingByEmail.id, normalizedEmail))
+                    .returning();
+
+                if (updated) {
+                    return getCustomerProfile({ customerId: updated.id });
+                }
+
+                // Another request may have linked this identity while this request was running.
+                const linkedToRequester = await db.query.customersTable.findFirst({
+                    where: and(
+                        eq(customersTable.authUserId, authUserId),
+                        isNull(customersTable.deletedAt)
+                    ),
+                    with: {
+                        addresses: {
+                            where: isNull(customerAddressesTable.deletedAt),
+                        },
+                    },
+                });
+
+                if (linkedToRequester) {
+                    return CustomerPublicProfileSchema.parse(
+                        customerProfileForSelfService(linkedToRequester)
+                    );
+                }
+            }
+        }
+
+        // If email is unverified and matching records are exclusively active unlinked guest records,
+        // do not lock the user out: allow creating an isolated registered customer record for this auth identity.
+        // If any matching record is suspended, archived, deleted, or registered to another auth account, reject access.
+        const hasBlockedOrConflictingRecords = matchingCustomers.some((c) =>
+            c.status !== "active" ||
+            c.deletedAt !== null ||
+            c.customerType !== "guest" ||
+            c.authUserId !== null
+        );
+
+        if (hasBlockedOrConflictingRecords) {
             throw customerIdentityLinkDeniedError();
         }
 
-        const existingByEmail = matchingCustomers[0]!;
-        const linkDecision = decideCustomerIdentityLink({
-            authUserId: existingByEmail.authUserId,
-            customerStatus: existingByEmail.status,
-            deletedAt: existingByEmail.deletedAt,
-            requesterAuthUserId: authUserId,
-            emailVerified,
-        });
-
-        if (linkDecision === "owned") {
-            return getCustomerProfile({ customerId: existingByEmail.id });
-        }
-
-        if (linkDecision === "claim") {
-            const [updated] = await db
-                .update(customersTable)
-                .set({
-                    authUserId,
-                    customerType: "registered",
-                    updatedAt: new Date(),
-                })
-                .where(buildCustomerIdentityLinkCondition(existingByEmail.id, normalizedEmail))
-                .returning();
-
-            if (updated) {
-                return getCustomerProfile({ customerId: updated.id });
-            }
-
-            // Another request may have linked this identity while this request was running.
-            const linkedToRequester = await db.query.customersTable.findFirst({
-                where: and(
-                    eq(customersTable.authUserId, authUserId),
-                    isNull(customersTable.deletedAt)
-                ),
-                with: {
-                    addresses: {
-                        where: isNull(customerAddressesTable.deletedAt),
-                    },
-                },
-            });
-
-            if (linkedToRequester) {
-                return CustomerPublicProfileSchema.parse(
-                    customerProfileForSelfService(linkedToRequester)
-                );
-            }
-        }
-
-        throw customerIdentityLinkDeniedError();
+        // Otherwise, all matching customers are active, unlinked guest records.
+        // Fall through to step 3 to create an isolated registered profile for this auth user.
     }
 
     // 3. Create new customer
@@ -812,7 +825,7 @@ export async function checkActiveCustomerOrders(customerId: string): Promise<boo
     const activeOrder = await db.query.ordersTable.findFirst({
         where: and(
             eq(ordersTable.customerId, customerId),
-            inArray(ordersTable.status, ['pending', 'processing', 'shipped'])
+            inArray(ordersTable.status, ['pending', 'confirmed', 'processing', 'shipped', 'in_transit'])
         ),
         columns: { id: true },
     });

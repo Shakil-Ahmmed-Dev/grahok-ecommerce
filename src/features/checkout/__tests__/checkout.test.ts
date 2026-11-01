@@ -7,12 +7,12 @@ import checkoutActions, { generateOrderNumber } from "@/features/checkout/action
 import { calculateCheckoutPricing } from "@/features/checkout/pricing";
 import {
     CheckoutAddressSchema,
-    CheckoutProcessInputSchema,
+
     type TCheckoutAddress,
 } from "@/features/checkout/types";
 import type { TVariantCheckoutSnapshot } from "@/features/products/types";
 import { db } from "@/lib/drizzle";
-import { productsTable, productVariantsTable } from "@/lib/drizzle/schemas/public";
+import { productVariantsTable } from "@/lib/drizzle/schemas/public";
 import { eq } from "drizzle-orm";
 
 async function runCheckoutTestSuite() {
@@ -283,6 +283,171 @@ async function runCheckoutTestSuite() {
         params: Promise.resolve({ orderId: guestOrder.id }),
     });
     assert.equal(cancelRes.status, 401);
+
+    // -------------------------------------------------------------
+    // 6. Phase 1 Payment Method Guard ("cod" only)
+    // -------------------------------------------------------------
+    console.log("-> 6. Testing Phase 1 Payment Method Guard");
+    const cardCheckoutReq = new Request("http://localhost:3000/api/v1/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            items: [{ variantId: variant.id, quantity: 1 }],
+            shippingAddress: testAddress,
+            paymentMethod: "card",
+            customer: {
+                email: "card.test@example.com",
+            },
+        }),
+    });
+    const cardCheckoutRes = await checkoutPost(cardCheckoutReq);
+    assert.equal(cardCheckoutRes.status, 400);
+    const cardErrorJson = await cardCheckoutRes.json();
+    assert(
+        JSON.stringify(cardErrorJson).includes("Only Cash on Delivery (cod) is currently supported"),
+        "Rejects 'card' payment method with Phase 1 guidance"
+    );
+
+    // -------------------------------------------------------------
+    // 7. Concurrent Cancellation Race Condition Test
+    // -------------------------------------------------------------
+    console.log("-> 7. Testing Concurrent Cancellation Race Condition Guard");
+    const raceOrder = await checkoutActions.processCheckout({
+        items: [{ variantId: variant.id, quantity: 1 }],
+        customer: {
+            email: "race.cancel@example.com",
+            firstName: "Race",
+            lastName: "Tester",
+        },
+        shippingAddress: testAddress,
+        paymentMethod: "cod",
+    });
+
+    const stockBeforeConcurrentCancel = Number(
+        (await db.query.productVariantsTable.findFirst({ where: eq(productVariantsTable.id, variant.id) }))?.stock
+    );
+
+    // Fire two concurrent cancellations simultaneously
+    const [cancelResult1, cancelResult2] = await Promise.allSettled([
+        checkoutActions.cancelOrder(raceOrder.id, {
+            guestAccessToken: raceOrder.guestAccessToken!,
+            reason: "Concurrent cancel attempt 1",
+        }),
+        checkoutActions.cancelOrder(raceOrder.id, {
+            guestAccessToken: raceOrder.guestAccessToken!,
+            reason: "Concurrent cancel attempt 2",
+        }),
+    ]);
+
+    const successes = [cancelResult1, cancelResult2].filter((r) => r.status === "fulfilled");
+    const rejections = [cancelResult1, cancelResult2].filter((r) => r.status === "rejected");
+
+    assert.equal(successes.length, 1, "Exactly one cancellation MUST succeed in a concurrent race");
+    assert.equal(rejections.length, 1, "The competing cancellation MUST be rejected with a 409 conflict");
+
+    const stockAfterConcurrentCancel = Number(
+        (await db.query.productVariantsTable.findFirst({ where: eq(productVariantsTable.id, variant.id) }))?.stock
+    );
+    if (variant.inventoryType === "discrete") {
+        assert.equal(
+            stockAfterConcurrentCancel,
+            stockBeforeConcurrentCancel + 1,
+            "Inventory MUST be restored exactly once (no phantom stock inflation)"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // 8. Admin Order Management & Configurable State Machine
+    // -------------------------------------------------------------
+    console.log("-> 8. Testing Admin Order Management & Fulfillment State Machine");
+
+    // 8a. List orders as admin
+    const adminList = await checkoutActions.listOrdersAdmin({ page: 1, limit: 10 });
+    assert(adminList.items.length > 0, "Admin orders list returns items");
+    assert(adminList.pagination.totalCount > 0, "Admin pagination includes totalCount");
+
+    // 8b. Create a fresh order to test state machine transitions
+    const workflowOrder = await checkoutActions.processCheckout({
+        items: [{ variantId: variant.id, quantity: 1 }],
+        customer: {
+            email: "admin.workflow@example.com",
+            firstName: "Workflow",
+            lastName: "Tester",
+        },
+        shippingAddress: testAddress,
+        paymentMethod: "cod",
+    });
+
+    // Verify initial status
+    assert.equal(workflowOrder.status, "pending");
+    assert.equal(workflowOrder.paymentStatus, "pending");
+
+    // 8c. Illegal transition: pending -> in_transit (skipping confirmed/processing/shipped)
+    await assert.rejects(
+        () =>
+            checkoutActions.updateOrderStatusAdmin(
+                workflowOrder.id,
+                { status: "in_transit" },
+                { adminId: "admin-test-id" }
+            ),
+        { name: "ConflictError" }
+    );
+
+    // 8d. Valid transition: pending -> confirmed
+    const confirmedOrder = await checkoutActions.updateOrderStatusAdmin(
+        workflowOrder.id,
+        { status: "confirmed" },
+        { adminId: "admin-test-id" }
+    );
+    assert.equal(confirmedOrder.status, "confirmed");
+
+    // 8e. Valid transition: confirmed -> processing
+    const processingOrder = await checkoutActions.updateOrderStatusAdmin(
+        workflowOrder.id,
+        { status: "processing" },
+        { adminId: "admin-test-id" }
+    );
+    assert.equal(processingOrder.status, "processing");
+
+    // 8f. Tracking guard: processing -> shipped without tracking number MUST fail for physical goods
+    await assert.rejects(
+        () =>
+            checkoutActions.updateOrderStatusAdmin(
+                workflowOrder.id,
+                { status: "shipped" },
+                { adminId: "admin-test-id" }
+            ),
+        { name: "BadRequestError" }
+    );
+
+    // 8g. Valid transition: processing -> shipped with tracking number
+    const shippedOrder = await checkoutActions.updateOrderStatusAdmin(
+        workflowOrder.id,
+        {
+            status: "shipped",
+            trackingNumber: "TRK-123456",
+            carrier: "Steadfast",
+        },
+        { adminId: "admin-test-id" }
+    );
+    assert.equal(shippedOrder.status, "shipped");
+    assert.equal((shippedOrder.metadata as Record<string, unknown>).trackingNumber, "TRK-123456");
+
+    // 8h. Valid transition: shipped -> delivered (auto marks COD paid)
+    const deliveredOrder = await checkoutActions.updateOrderStatusAdmin(
+        workflowOrder.id,
+        { status: "delivered" },
+        { adminId: "admin-test-id" }
+    );
+    assert.equal(deliveredOrder.status, "delivered");
+    assert.equal(deliveredOrder.paymentStatus, "paid", "Delivered COD order MUST be auto-marked as paid");
+    assert(deliveredOrder.deliveredAt !== null, "deliveredAt timestamp set");
+    assert(deliveredOrder.paidAt !== null, "paidAt timestamp set");
+
+    // 8i. Retrieve with getOrderAdminById
+    const fetchedAdminOrder = await checkoutActions.getOrderAdminById(workflowOrder.id);
+    assert.equal(fetchedAdminOrder.id, workflowOrder.id);
+    assert.equal(fetchedAdminOrder.status, "delivered");
 
     console.log("✔ All Checkout API and Domain integration tests passed successfully! 🛍️");
 }

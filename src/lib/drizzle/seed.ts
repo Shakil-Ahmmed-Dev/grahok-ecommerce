@@ -752,7 +752,7 @@ const seedOrderStatuses: SeedOrderStatus[] = [
         allowAdminCancel: true,
         refundRule: "none",
         deductionValue: "0.00",
-        restockRule: "none",
+        restockRule: "immediate",
         requireTrackingToEnter: false,
         autoMarkCodPaid: false,
     },

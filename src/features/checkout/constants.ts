@@ -16,6 +16,9 @@ export type TPaymentStatus = (typeof PAYMENT_STATUSES)[number];
 export const PAYMENT_METHODS = ["cod", "card", "manual"] as const;
 export type TPaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+export const ENABLED_CHECKOUT_PAYMENT_METHODS = ["cod"] as const;
+export type TEnabledCheckoutPaymentMethod = (typeof ENABLED_CHECKOUT_PAYMENT_METHODS)[number];
+
 export const DEFAULT_CURRENCY = "BDT";
 export const DEFAULT_BASE_SHIPPING_FEE = 10.0;
 export const FREE_SHIPPING_THRESHOLD = 100.0;

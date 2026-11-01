@@ -1,15 +1,14 @@
 import { CountryCodeSchema, PhoneSchema } from "@/features/customers/types";
-import { VariantCheckoutSnapshotSchema, type TVariantCheckoutSnapshot } from "@/features/products/types";
+import { VariantCheckoutSnapshotSchema } from "@/features/products/types";
 import { type ConsignmentLogisticsResult } from "@/features/products/logistics";
 import { CUSTOMER_TYPES } from "@/lib/drizzle/schemas/public";
 import { z } from "zod";
 import {
+    ENABLED_CHECKOUT_PAYMENT_METHODS,
     ORDER_STATUSES,
     PAYMENT_METHODS,
     PAYMENT_STATUSES,
-    type TOrderStatus,
-    type TPaymentMethod,
-    type TPaymentStatus,
+    type TEnabledCheckoutPaymentMethod,
 } from "./constants";
 
 export const CheckoutItemInputSchema = z.object({
@@ -70,7 +69,16 @@ export const CheckoutProcessInputSchema = z.object({
     shippingAddress: CheckoutShippingAddressInputSchema,
     billingAddress: CheckoutBillingAddressInputSchema.optional(),
     saveShippingAddress: z.boolean().default(false),
-    paymentMethod: z.enum(PAYMENT_METHODS).default("cod"),
+    paymentMethod: z
+        .enum(PAYMENT_METHODS)
+        .default("cod")
+        .refine(
+            (method): method is TEnabledCheckoutPaymentMethod =>
+                ENABLED_CHECKOUT_PAYMENT_METHODS.includes(method as TEnabledCheckoutPaymentMethod),
+            {
+                message: "Only Cash on Delivery (cod) is currently supported in this phase",
+            }
+        ),
     notes: z.string().trim().max(1000).optional(),
     metadata: z.record(z.string(), z.unknown()).default({}),
 });
@@ -156,6 +164,8 @@ export const OrderDTOSchema = z.object({
     metadata: z.record(z.string(), z.unknown()).default({}),
     guestAccessToken: z.string().nullable().optional(),
     cancelledAt: z.coerce.date().nullable().optional(),
+    deliveredAt: z.coerce.date().nullable().optional(),
+    refundedAt: z.coerce.date().nullable().optional(),
     paidAt: z.coerce.date().nullable().optional(),
     createdAt: z.coerce.date(),
     updatedAt: z.coerce.date(),
@@ -164,6 +174,37 @@ export const OrderDTOSchema = z.object({
 export type TOrderDTO = z.infer<typeof OrderDTOSchema>;
 
 export interface CustomerOrderListResponse {
+    items: TOrderDTO[];
+    pagination: {
+        totalCount: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+        hasNextPage: boolean;
+        hasPrevPage: boolean;
+    };
+}
+
+export const AdminOrderListQuerySchema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    limit: z.coerce.number().int().positive().max(100).default(20),
+    status: z.enum(ORDER_STATUSES).optional(),
+    paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
+    search: z.string().trim().optional(),
+});
+export type TAdminOrderListQuery = z.infer<typeof AdminOrderListQuerySchema>;
+
+export const AdminOrderStatusTransitionInputSchema = z.object({
+    status: z.enum(ORDER_STATUSES),
+    trackingNumber: z.string().trim().max(100).optional(),
+    carrier: z.string().trim().max(100).optional(),
+    trackingUrl: z.string().url().trim().optional(),
+    reason: z.string().trim().max(500).optional(),
+    notes: z.string().trim().max(1000).optional(),
+});
+export type TAdminOrderStatusTransitionInput = z.infer<typeof AdminOrderStatusTransitionInputSchema>;
+
+export interface AdminOrderListResponse {
     items: TOrderDTO[];
     pagination: {
         totalCount: number;

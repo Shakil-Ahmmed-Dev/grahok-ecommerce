@@ -4,11 +4,12 @@ import {
     customersTable,
     orderItemsTable,
     ordersTable,
+    orderStatusesTable,
     type TCheckoutAddressSnapshot,
     type TConsignmentLogisticsSnapshot,
 } from "@/lib/drizzle/schemas/public";
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "@/lib/error";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import customerActions from "@/features/customers/actions";
 import { recordCustomerAuditLog } from "@/features/customers/audit";
@@ -22,18 +23,22 @@ import { roundToDecimals } from "@/features/products/logistics";
 import type { TVariantCheckoutSnapshot } from "@/features/products/types";
 import {
     CANCELLABLE_ORDER_STATUSES,
-    DEFAULT_CURRENCY,
     type TOrderStatus,
 } from "./constants";
 import { calculateCheckoutPricing, type CheckoutPricingItemInput } from "./pricing";
 import {
+    AdminOrderListQuerySchema,
+    AdminOrderStatusTransitionInputSchema,
     CheckoutAddressSchema,
     CheckoutEstimateInputSchema,
     CheckoutEstimateResponseSchema,
     CheckoutProcessInputSchema,
     CustomerOrderListQuerySchema,
     OrderDTOSchema,
+    type AdminOrderListResponse,
     type CustomerOrderListResponse,
+    type TAdminOrderListQuery,
+    type TAdminOrderStatusTransitionInput,
     type TCheckoutAddress,
     type TCheckoutEstimateInput,
     type TCheckoutEstimateResponse,
@@ -250,16 +255,29 @@ export async function processCheckout(
         customerName = [validated.customer.firstName, validated.customer.lastName].filter(Boolean).join(" ") || null;
         customerPhone = validated.customer.phone ?? null;
 
-        // Find existing customer by email or create new guest record
-        const existingCustomer = await db.query.customersTable.findFirst({
+        // Find existing customer records matching this email
+        const matchingCustomers = await db.query.customersTable.findMany({
             where: and(
                 eq(sql`LOWER(${customersTable.email})`, normalizedEmail),
                 isNull(customersTable.deletedAt)
             ),
         });
 
-        if (existingCustomer) {
-            customerId = existingCustomer.id;
+        // Security Guard: reject guest checkout if any profile under this email is suspended or archived
+        const hasBlockedCustomer = matchingCustomers.some(
+            (c) => c.status === "suspended" || c.status === "archived"
+        );
+        if (hasBlockedCustomer) {
+            throw new ForbiddenError("Customer access is unavailable");
+        }
+
+        // Reuse an existing active guest customer profile that is unlinked (authUserId is null)
+        const existingGuest = matchingCustomers.find(
+            (c) => c.customerType === "guest" && c.authUserId === null && c.status === "active"
+        );
+
+        if (existingGuest) {
+            customerId = existingGuest.id;
         } else {
             const [newGuest] = await db
                 .insert(customersTable)
@@ -643,6 +661,7 @@ export async function cancelOrder(
         with: {
             items: true,
             customer: true,
+            statusConfig: true,
         },
     });
 
@@ -662,10 +681,18 @@ export async function cancelOrder(
         throw new ForbiddenError("You are not authorized to cancel this order");
     }
 
-    // Status check
-    if (!CANCELLABLE_ORDER_STATUSES.includes(order.status as TOrderStatus)) {
+    // Status / Permission check against order_statuses configuration
+    const isCancellableByActor = access.isAdmin
+        ? (order.statusConfig?.allowAdminCancel ?? CANCELLABLE_ORDER_STATUSES.includes(order.status as TOrderStatus))
+        : (order.statusConfig?.allowCustomerCancel ?? (order.status === "pending" || order.status === "confirmed"));
+
+    if (!isCancellableByActor) {
         throw new ConflictError(
-            `Cannot cancel order in '${order.status}' status. Only pending or processing orders may be cancelled.`
+            `Cannot cancel order in '${order.status}' status. ${
+                access.isAdmin
+                    ? "Admin cancellation is not permitted for this order status."
+                    : "Customer cancellation is not permitted for this order status."
+            }`
         );
     }
 
@@ -675,33 +702,49 @@ export async function cancelOrder(
             : `Cancellation Reason: ${access.reason}`
         : order.notes;
 
-    // 1. Release reserved inventory
-    for (const item of order.items) {
-        if (item.variantId) {
-            try {
-                await releaseVariantInventory({
-                    variantId: item.variantId,
-                    quantity: item.quantity,
-                });
-            } catch {
-                // Best effort release
-            }
-        }
-    }
+    const restockRule = order.statusConfig?.restockRule ?? "immediate";
+    const newRestockStatus = restockRule === "immediate"
+        ? "restocked"
+        : (restockRule === "hold_for_inspection" ? "pending_inspection" : "not_applicable");
 
-    // 2. Update order
+    // 1. Atomically claim cancellation FIRST to prevent concurrent double-cancel / phantom stock release
     const [updatedOrder] = await db
         .update(ordersTable)
         .set({
             status: "cancelled",
             cancelledAt: new Date(),
             notes: updatedNotes,
+            restockStatus: newRestockStatus,
+            updatedAt: new Date(),
         })
-        .where(eq(ordersTable.id, orderId))
+        .where(
+            and(
+                eq(ordersTable.id, orderId),
+                eq(ordersTable.status, order.status)
+            )
+        )
         .returning();
 
     if (!updatedOrder) {
-        throw new NotFoundError("Failed to update cancelled order");
+        throw new ConflictError(
+            "Order could not be cancelled because its status has changed or cancellation is already being processed."
+        );
+    }
+
+    // 2. Release reserved inventory if restockRule is immediate
+    if (restockRule === "immediate") {
+        for (const item of order.items) {
+            if (item.variantId) {
+                try {
+                    await releaseVariantInventory({
+                        variantId: item.variantId,
+                        quantity: item.quantity,
+                    });
+                } catch {
+                    // Best effort release
+                }
+            }
+        }
     }
 
     // 3. Reverse customer statistics if applicable
@@ -710,6 +753,7 @@ export async function cancelOrder(
             await db
                 .update(customersTable)
                 .set({
+                    totalOrders: sql`GREATEST(0, ${customersTable.totalOrders} - 1)`,
                     totalSpent: sql`GREATEST(0, ${customersTable.totalSpent} - ${Number(order.totalAmount)})`,
                 })
                 .where(eq(customersTable.id, order.customerId));
@@ -723,6 +767,7 @@ export async function cancelOrder(
                     orderId: order.id,
                     orderNumber: order.orderNumber,
                     reason: access.reason ?? null,
+                    restockStatus: newRestockStatus,
                 },
                 headers: access.headers,
                 ipAddress: access.clientIp,
@@ -788,12 +833,251 @@ export async function listCustomerOrders(
     };
 }
 
+/**
+ * Admin: List orders with pagination and filtering by status, paymentStatus, and search.
+ */
+export async function listOrdersAdmin(
+    query: TAdminOrderListQuery
+): Promise<AdminOrderListResponse> {
+    const validated = AdminOrderListQuerySchema.parse(query);
+
+    const conditions = [];
+    if (validated.status) {
+        conditions.push(eq(ordersTable.status, validated.status));
+    }
+    if (validated.paymentStatus) {
+        conditions.push(eq(ordersTable.paymentStatus, validated.paymentStatus));
+    }
+    if (validated.search) {
+        const term = `%${validated.search}%`;
+        conditions.push(
+            or(
+                ilike(ordersTable.orderNumber, term),
+                ilike(ordersTable.customerEmail, term),
+                ilike(ordersTable.customerName, term)
+            )
+        );
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const limit = validated.limit;
+    const page = validated.page;
+    const offset = (page - 1) * limit;
+
+    const [countResult] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(ordersTable)
+        .where(whereClause);
+
+    const totalCount = countResult?.count ?? 0;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+
+    const orders = await db.query.ordersTable.findMany({
+        where: whereClause,
+        orderBy: [desc(ordersTable.createdAt)],
+        limit,
+        offset,
+        with: {
+            items: true,
+            customer: true,
+        },
+    });
+
+    return {
+        items: orders.map((o) => OrderDTOSchema.parse(o)),
+        pagination: {
+            totalCount,
+            page,
+            limit,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+        },
+    };
+}
+
+/**
+ * Admin: Get complete order detail by ID.
+ */
+export async function getOrderAdminById(orderId: string): Promise<TOrderDTO> {
+    const order = await db.query.ordersTable.findFirst({
+        where: eq(ordersTable.id, orderId),
+        with: {
+            items: true,
+            customer: true,
+        },
+    });
+
+    if (!order) {
+        throw new NotFoundError("Order not found");
+    }
+
+    return OrderDTOSchema.parse(order);
+}
+
+/**
+ * Admin: Update order status following the configurable order_statuses workflow state machine.
+ */
+export async function updateOrderStatusAdmin(
+    orderId: string,
+    input: TAdminOrderStatusTransitionInput,
+    adminMeta: {
+        adminId: string;
+        clientIp?: string;
+        userAgent?: string;
+        headers?: Headers;
+    }
+): Promise<TOrderDTO> {
+    const validated = AdminOrderStatusTransitionInputSchema.parse(input);
+
+    const order = await db.query.ordersTable.findFirst({
+        where: eq(ordersTable.id, orderId),
+        with: {
+            items: true,
+            customer: true,
+            statusConfig: true,
+        },
+    });
+
+    if (!order) {
+        throw new NotFoundError("Order not found");
+    }
+
+    // If transitioning to cancelled, delegate directly to cancelOrder to handle inventory and spend reversal
+    if (validated.status === "cancelled") {
+        return cancelOrder(orderId, {
+            isAdmin: true,
+            reason: validated.reason,
+            clientIp: adminMeta.clientIp,
+            headers: adminMeta.headers,
+        });
+    }
+
+    // No-op if target status is identical to current status
+    if (validated.status === order.status) {
+        return OrderDTOSchema.parse(order);
+    }
+
+    // Enforce workflow transitions defined in order_statuses
+    const allowedTransitions = order.statusConfig?.allowedNextStatuses ?? [];
+    if (!allowedTransitions.includes(validated.status)) {
+        throw new ConflictError(
+            `Transition from '${order.status}' to '${validated.status}' is not allowed. Allowed transitions: ${
+                allowedTransitions.length > 0 ? allowedTransitions.join(", ") : "none"
+            }`
+        );
+    }
+
+    // Fetch configuration for the target status
+    const targetStatus = await db.query.orderStatusesTable.findFirst({
+        where: eq(orderStatusesTable.code, validated.status),
+    });
+
+    if (!targetStatus) {
+        throw new BadRequestError(`Target order status '${validated.status}' is not recognized`);
+    }
+
+    // Check tracking number requirements for physical goods
+    const hasPhysicalGoods = order.logistics?.hasPhysicalGoods !== false;
+    const existingTracking = (order.metadata as Record<string, unknown> | null)?.trackingNumber;
+    if (targetStatus.requireTrackingToEnter && hasPhysicalGoods && !validated.trackingNumber && !existingTracking) {
+        throw new BadRequestError(`Tracking number is required to transition order to '${validated.status}'`);
+    }
+
+    // Calculate side effects
+    const deliveredAt = validated.status === "delivered" ? (order.deliveredAt ?? new Date()) : order.deliveredAt;
+
+    let paymentStatus = order.paymentStatus;
+    let paidAt = order.paidAt;
+    if (targetStatus.autoMarkCodPaid && order.paymentMethod === "cod" && order.paymentStatus === "pending") {
+        paymentStatus = "paid";
+        paidAt = new Date();
+    }
+
+    const updatedNotes = validated.notes || validated.reason
+        ? order.notes
+            ? `${order.notes} | ${validated.notes || `Status Reason: ${validated.reason}`}`
+            : (validated.notes || `Status Reason: ${validated.reason}`)
+        : order.notes;
+
+    const trackingMetadata: Record<string, unknown> = {};
+    if (validated.trackingNumber) trackingMetadata.trackingNumber = validated.trackingNumber;
+    if (validated.carrier) trackingMetadata.carrier = validated.carrier;
+    if (validated.trackingUrl) trackingMetadata.trackingUrl = validated.trackingUrl;
+
+    const updatedMetadata = {
+        ...(order.metadata || {}),
+        ...trackingMetadata,
+        ...(validated.reason ? { lastStatusChangeReason: validated.reason } : {}),
+    };
+
+    // Atomically update order status with concurrency check
+    const [updatedOrder] = await db
+        .update(ordersTable)
+        .set({
+            status: validated.status,
+            deliveredAt,
+            paidAt,
+            paymentStatus,
+            notes: updatedNotes,
+            metadata: updatedMetadata,
+            updatedAt: new Date(),
+        })
+        .where(
+            and(
+                eq(ordersTable.id, orderId),
+                eq(ordersTable.status, order.status)
+            )
+        )
+        .returning();
+
+    if (!updatedOrder) {
+        throw new ConflictError(
+            "Order status could not be updated because its status was modified concurrently by another process."
+        );
+    }
+
+    // Record customer audit log
+    if (order.customerId) {
+        try {
+            await recordCustomerAuditLog({
+                customerId: order.customerId,
+                actorId: adminMeta.adminId,
+                actorType: "admin",
+                action: "order_status_updated",
+                changes: {
+                    orderId: order.id,
+                    orderNumber: order.orderNumber,
+                    fromStatus: order.status,
+                    toStatus: validated.status,
+                    trackingNumber: validated.trackingNumber ?? null,
+                    carrier: validated.carrier ?? null,
+                    paymentStatus,
+                },
+                headers: adminMeta.headers,
+                ipAddress: adminMeta.clientIp,
+                userAgent: adminMeta.userAgent,
+            });
+        } catch {
+            // Non-blocking
+        }
+    }
+
+    return OrderDTOSchema.parse({
+        ...updatedOrder,
+        items: order.items,
+    });
+}
+
 const checkoutActions = {
     estimateCheckout,
     processCheckout,
     getOrderById,
     cancelOrder,
     listCustomerOrders,
+    listOrdersAdmin,
+    getOrderAdminById,
+    updateOrderStatusAdmin,
     generateOrderNumber,
     generateGuestAccessToken,
     hashGuestAccessToken,
