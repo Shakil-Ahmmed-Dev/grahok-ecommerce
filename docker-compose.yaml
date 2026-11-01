@@ -1,12 +1,58 @@
 services:
   web:
-    image: node:22-alpine
+    profiles: ["production"]
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: grahok-ecommerce:local
     container_name: grahok-ecommerce
+    env_file:
+      - .env
     environment:
-      - NODE_ENV=development
-    volumes:
-      - ./:/app
-      - /app/node_modules
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
     ports:
       - "3000:3000"
-    command: [  ]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web-dev:
+    profiles: ["development"]
+    init: true
+    image: node:22-alpine
+    container_name: grahok-ecommerce-dev
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
+      COREPACK_HOME: /root/.cache/corepack
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      - corepack-cache:/root/.cache/corepack
+      - pnpm-cache:/root/.local/share/pnpm/store
+    ports:
+      - "3000:3000"
+    command:
+      - sh
+      - -c
+      - corepack enable && pnpm install && pnpm dev --hostname 0.0.0.0
+
+volumes:
+  corepack-cache:
+  pnpm-cache:
+

@@ -4,13 +4,21 @@ import { checkRateLimit } from "@/lib/rate-limit/rate-limiter";
 import { applySecurityHeaders } from "@/lib/security/headers";
 
 export const proxy = async (request: NextRequest) => {
+    const pathname = request.nextUrl.pathname;
+
+    // Health check endpoint bypass: skip rate limiting accounting and omit X-RateLimit-* headers, while applying security headers
+    if (pathname === "/api/health" || pathname === "/api/health/") {
+        const response = NextResponse.next();
+        applySecurityHeaders(response.headers);
+        return response;
+    }
+
     // Determine client IP safely
     const forwarded = request.headers.get("x-forwarded-for");
     const ip = forwarded
         ? forwarded.split(",")[0].trim()
         : request.headers.get("x-real-ip") ?? "127.0.0.1";
 
-    const pathname = request.nextUrl.pathname;
     const tier = getRateLimitTier(pathname);
     const key = `${tier.name}:${ip}`;
 
