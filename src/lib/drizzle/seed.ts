@@ -6,6 +6,7 @@ import {
     customerAddressesTable,
     customerAuditLogsTable,
     customersTable,
+    orderStatusesTable,
     productCategoriesTable,
     productOptionsTable,
     productOptionValuesTable,
@@ -719,7 +720,206 @@ const seedCustomers: SeedCustomerItem[] = [
     },
 ];
 
+interface SeedOrderStatus {
+    code: string;
+    name: string;
+    description: string;
+    stageCategory: "open" | "fulfillment" | "shipped_docked" | "in_transit" | "completed" | "cancelled" | "refunded";
+    allowedNextStatuses: string[];
+    isInitialDefault: boolean;
+    isActive: boolean;
+    position: number;
+    allowCustomerCancel: boolean;
+    allowAdminCancel: boolean;
+    refundRule: "full" | "deduct_shipping" | "deduct_flat_fee" | "deduct_percentage" | "deduct_shipping_and_fee" | "none";
+    deductionValue: string;
+    restockRule: "immediate" | "hold_for_inspection" | "none";
+    requireTrackingToEnter: boolean;
+    autoMarkCodPaid: boolean;
+}
+
+const seedOrderStatuses: SeedOrderStatus[] = [
+    {
+        code: "pending",
+        name: "Pending",
+        description: "Order created, awaiting confirmation or processing",
+        stageCategory: "open",
+        allowedNextStatuses: ["confirmed", "processing", "cancelled"],
+        isInitialDefault: true,
+        isActive: true,
+        position: 10,
+        allowCustomerCancel: true,
+        allowAdminCancel: true,
+        refundRule: "none",
+        deductionValue: "0.00",
+        restockRule: "none",
+        requireTrackingToEnter: false,
+        autoMarkCodPaid: false,
+    },
+    {
+        code: "confirmed",
+        name: "Confirmed",
+        description: "Order verified and accepted by store, ready for fulfillment",
+        stageCategory: "open",
+        allowedNextStatuses: ["processing", "cancelled"],
+        isInitialDefault: false,
+        isActive: true,
+        position: 20,
+        allowCustomerCancel: true,
+        allowAdminCancel: true,
+        refundRule: "full",
+        deductionValue: "0.00",
+        restockRule: "immediate",
+        requireTrackingToEnter: false,
+        autoMarkCodPaid: false,
+    },
+    {
+        code: "processing",
+        name: "Processing",
+        description: "Order is being picked, packed, or prepared for shipment",
+        stageCategory: "fulfillment",
+        allowedNextStatuses: ["shipped", "cancelled"],
+        isInitialDefault: false,
+        isActive: true,
+        position: 30,
+        allowCustomerCancel: false,
+        allowAdminCancel: true,
+        refundRule: "full",
+        deductionValue: "0.00",
+        restockRule: "immediate",
+        requireTrackingToEnter: false,
+        autoMarkCodPaid: false,
+    },
+    {
+        code: "shipped",
+        name: "Shipped",
+        description: "Consignment handed over to courier or docked for dispatch",
+        stageCategory: "shipped_docked",
+        allowedNextStatuses: ["in_transit", "delivered", "cancelled"],
+        isInitialDefault: false,
+        isActive: true,
+        position: 40,
+        allowCustomerCancel: false,
+        allowAdminCancel: true,
+        refundRule: "deduct_shipping",
+        deductionValue: "0.00",
+        restockRule: "hold_for_inspection",
+        requireTrackingToEnter: true,
+        autoMarkCodPaid: false,
+    },
+    {
+        code: "in_transit",
+        name: "In Transit",
+        description: "Order is on the way to the customer destination",
+        stageCategory: "in_transit",
+        allowedNextStatuses: ["delivered", "cancelled"],
+        isInitialDefault: false,
+        isActive: true,
+        position: 50,
+        allowCustomerCancel: false,
+        allowAdminCancel: true,
+        refundRule: "deduct_shipping",
+        deductionValue: "0.00",
+        restockRule: "hold_for_inspection",
+        requireTrackingToEnter: true,
+        autoMarkCodPaid: false,
+    },
+    {
+        code: "delivered",
+        name: "Delivered",
+        description: "Order successfully delivered to customer",
+        stageCategory: "completed",
+        allowedNextStatuses: ["refunded"],
+        isInitialDefault: false,
+        isActive: true,
+        position: 60,
+        allowCustomerCancel: false,
+        allowAdminCancel: false,
+        refundRule: "deduct_shipping",
+        deductionValue: "0.00",
+        restockRule: "hold_for_inspection",
+        requireTrackingToEnter: false,
+        autoMarkCodPaid: true,
+    },
+    {
+        code: "cancelled",
+        name: "Cancelled",
+        description: "Order was cancelled before completion",
+        stageCategory: "cancelled",
+        allowedNextStatuses: [],
+        isInitialDefault: false,
+        isActive: true,
+        position: 70,
+        allowCustomerCancel: false,
+        allowAdminCancel: false,
+        refundRule: "full",
+        deductionValue: "0.00",
+        restockRule: "immediate",
+        requireTrackingToEnter: false,
+        autoMarkCodPaid: false,
+    },
+    {
+        code: "refunded",
+        name: "Refunded",
+        description: "Order payment refunded and items accounted for",
+        stageCategory: "refunded",
+        allowedNextStatuses: [],
+        isInitialDefault: false,
+        isActive: true,
+        position: 80,
+        allowCustomerCancel: false,
+        allowAdminCancel: false,
+        refundRule: "full",
+        deductionValue: "0.00",
+        restockRule: "hold_for_inspection",
+        requireTrackingToEnter: false,
+        autoMarkCodPaid: false,
+    },
+];
+
 async function seed() {
+    console.log("Seeding baseline order statuses...");
+    for (const status of seedOrderStatuses) {
+        await db.insert(orderStatusesTable)
+            .values({
+                code: status.code,
+                name: status.name,
+                description: status.description,
+                stageCategory: status.stageCategory,
+                allowedNextStatuses: [...status.allowedNextStatuses],
+                isInitialDefault: status.isInitialDefault,
+                isActive: status.isActive,
+                position: status.position,
+                allowCustomerCancel: status.allowCustomerCancel,
+                allowAdminCancel: status.allowAdminCancel,
+                refundRule: status.refundRule,
+                deductionValue: status.deductionValue,
+                restockRule: status.restockRule,
+                requireTrackingToEnter: status.requireTrackingToEnter,
+                autoMarkCodPaid: status.autoMarkCodPaid,
+            })
+            .onConflictDoUpdate({
+                target: orderStatusesTable.code,
+                set: {
+                    name: status.name,
+                    description: status.description,
+                    stageCategory: status.stageCategory,
+                    allowedNextStatuses: [...status.allowedNextStatuses],
+                    isInitialDefault: status.isInitialDefault,
+                    isActive: status.isActive,
+                    position: status.position,
+                    allowCustomerCancel: status.allowCustomerCancel,
+                    allowAdminCancel: status.allowAdminCancel,
+                    refundRule: status.refundRule,
+                    deductionValue: status.deductionValue,
+                    restockRule: status.restockRule,
+                    requireTrackingToEnter: status.requireTrackingToEnter,
+                    autoMarkCodPaid: status.autoMarkCodPaid,
+                },
+            });
+    }
+    console.log(`Synced ${seedOrderStatuses.length} baseline order statuses.`);
+
     console.log("Seeding multi-level categories...");
     const categoryMap = new Map<string, string>();
 

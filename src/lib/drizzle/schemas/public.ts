@@ -59,14 +59,54 @@ export type TCustomerAuditAction = (typeof CUSTOMER_AUDIT_ACTIONS)[number];
 
 export const ORDER_STATUSES = [
     "pending",
+    "confirmed",
     "processing",
     "shipped",
+    "in_transit",
     "delivered",
     "cancelled",
     "refunded",
 ] as const;
 export type TOrderStatus = (typeof ORDER_STATUSES)[number];
-export const orderStatusEnum = pgEnum("order_status", ORDER_STATUSES);
+
+export const ORDER_STAGE_CATEGORIES = [
+    "open",
+    "fulfillment",
+    "shipped_docked",
+    "in_transit",
+    "completed",
+    "cancelled",
+    "refunded",
+] as const;
+export type TOrderStageCategory = (typeof ORDER_STAGE_CATEGORIES)[number];
+export const orderStageCategoryEnum = pgEnum("order_stage_category", ORDER_STAGE_CATEGORIES);
+
+export const ORDER_REFUND_RULES = [
+    "full",
+    "deduct_shipping",
+    "deduct_flat_fee",
+    "deduct_percentage",
+    "deduct_shipping_and_fee",
+    "none",
+] as const;
+export type TOrderRefundRule = (typeof ORDER_REFUND_RULES)[number];
+export const orderRefundRuleEnum = pgEnum("order_refund_rule", ORDER_REFUND_RULES);
+
+export const ORDER_RESTOCK_RULES = [
+    "immediate",
+    "hold_for_inspection",
+    "none",
+] as const;
+export type TOrderRestockRule = (typeof ORDER_RESTOCK_RULES)[number];
+export const orderRestockRuleEnum = pgEnum("order_restock_rule", ORDER_RESTOCK_RULES);
+
+export const ORDER_RESTOCK_STATUSES = [
+    "not_applicable",
+    "pending_inspection",
+    "restocked",
+] as const;
+export type TOrderRestockStatus = (typeof ORDER_RESTOCK_STATUSES)[number];
+export const orderRestockStatusEnum = pgEnum("order_restock_status", ORDER_RESTOCK_STATUSES);
 
 export const PAYMENT_STATUSES = ["pending", "paid", "failed", "refunded"] as const;
 export type TPaymentStatus = (typeof PAYMENT_STATUSES)[number];
@@ -448,6 +488,32 @@ export const productSlugRedirectsTable = pgTable("product_slug_redirects", {
    Order & Checkout Tables
    ========================================================================== */
 
+export const orderStatusesTable = pgTable(
+    "order_statuses",
+    {
+        code: text("code").primaryKey(),
+        name: text("name").notNull(),
+        description: text("description"),
+        stageCategory: orderStageCategoryEnum("stage_category").notNull(),
+        allowedNextStatuses: jsonb("allowed_next_statuses").$type<string[]>().notNull().default([]),
+        isInitialDefault: boolean("is_initial_default").notNull().default(false),
+        isActive: boolean("is_active").notNull().default(true),
+        position: integer("position").notNull().default(0),
+        allowCustomerCancel: boolean("allow_customer_cancel").notNull().default(false),
+        allowAdminCancel: boolean("allow_admin_cancel").notNull().default(false),
+        refundRule: orderRefundRuleEnum("refund_rule").notNull(),
+        deductionValue: numeric("deduction_value", { scale: 2 }).default("0.00"),
+        restockRule: orderRestockRuleEnum("restock_rule").notNull(),
+        requireTrackingToEnter: boolean("require_tracking_to_enter").notNull().default(false),
+        autoMarkCodPaid: boolean("auto_mark_cod_paid").notNull().default(false),
+    },
+    (table) => [
+        index("order_statuses_stage_category_idx").on(table.stageCategory),
+        index("order_statuses_position_idx").on(table.position),
+        index("order_statuses_is_active_idx").on(table.isActive),
+    ]
+);
+
 export const ordersTable = pgTable(
     "orders",
     {
@@ -458,10 +524,14 @@ export const ordersTable = pgTable(
         customerEmail: text("customer_email").notNull(),
         customerName: text("customer_name"),
         customerPhone: text("customer_phone"),
-        status: orderStatusEnum("status").notNull().default("pending"),
+        status: text("status")
+            .$type<TOrderStatus>()
+            .notNull()
+            .default("pending")
+            .references(() => orderStatusesTable.code, { onUpdate: "cascade", onDelete: "restrict" }),
         paymentStatus: paymentStatusEnum("payment_status").notNull().default("pending"),
         paymentMethod: paymentMethodEnum("payment_method").notNull().default("cod"),
-        currency: text("currency").notNull().default("USD"),
+        currency: text("currency").notNull().default("BDT"),
         subtotal: numeric("subtotal", { scale: 2 }).notNull(),
         shippingFee: numeric("shipping_fee", { scale: 2 }).notNull().default("0.00"),
         tax: numeric("tax", { scale: 2 }).notNull().default("0.00"),
@@ -470,10 +540,15 @@ export const ordersTable = pgTable(
         shippingAddress: jsonb("shipping_address").$type<TCheckoutAddressSnapshot>().notNull(),
         billingAddress: jsonb("billing_address").$type<TCheckoutAddressSnapshot>().notNull(),
         logistics: jsonb("logistics").$type<TConsignmentLogisticsSnapshot>(),
+        policySnapshot: jsonb("policy_snapshot").$type<Record<string, unknown>>(),
+        refundAmount: numeric("refund_amount", { scale: 2 }),
+        restockStatus: orderRestockStatusEnum("restock_status").notNull().default("not_applicable"),
         notes: text("notes"),
         metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
         guestAccessTokenHash: text("guest_access_token_hash"),
         cancelledAt: timestamp("cancelled_at"),
+        deliveredAt: timestamp("delivered_at"),
+        refundedAt: timestamp("refunded_at"),
         paidAt: timestamp("paid_at"),
         createdAt: timestamp("created_at").defaultNow().notNull(),
         updatedAt: timestamp("updated_at")
@@ -623,10 +698,18 @@ export const productCategoriesRelations = relations(productCategoriesTable, ({ o
     }),
 }));
 
+export const orderStatusesRelations = relations(orderStatusesTable, ({ many }) => ({
+    orders: many(ordersTable),
+}));
+
 export const ordersRelations = relations(ordersTable, ({ one, many }) => ({
     customer: one(customersTable, {
         fields: [ordersTable.customerId],
         references: [customersTable.id],
+    }),
+    statusConfig: one(orderStatusesTable, {
+        fields: [ordersTable.status],
+        references: [orderStatusesTable.code],
     }),
     items: many(orderItemsTable),
 }));
