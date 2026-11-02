@@ -1,15 +1,18 @@
-import { NeonDbError } from "@neondatabase/serverless";
 import { BadRequestError, ConflictError, type AppError } from "./index";
 
-export const isNeonDbError = (err: unknown): err is NeonDbError => {
-    if (err instanceof NeonDbError) {
-        return true;
+export interface PostgresError extends Error {
+    code?: string;
+    column?: string;
+    constraint?: string;
+}
+
+export const isPostgresError = (err: unknown): err is PostgresError => {
+    if (!(err instanceof Error)) {
+        return false;
     }
-    return (
-        err instanceof Error &&
-        (err as Error & { code?: unknown }).code !== undefined &&
-        (err as Error & { name?: unknown }).name === "NeonDbError"
-    );
+
+    const code = "code" in err ? err.code : undefined;
+    return typeof code === "string" && /^\d{5}$/.test(code);
 };
 
 const CONFLICT_CODES = new Set([
@@ -26,7 +29,7 @@ const BAD_REQUEST_CODES = new Set([
     "22003", // numeric_value_out_of_range
 ]);
 
-export const mapPostgresError = (err: NeonDbError): AppError | null => {
+export const mapPostgresError = (err: PostgresError): AppError | null => {
     if (err.code) {
         if (CONFLICT_CODES.has(err.code)) {
             return new ConflictError("A record with that value already exists");
