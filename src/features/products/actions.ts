@@ -469,6 +469,10 @@ export const getProducts = async (query: TProductQuery): Promise<TProductsList> 
                         category: true,
                     },
                 },
+                variants: {
+                    where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                    orderBy: (variant, { asc }) => [asc(variant.createdAt)],
+                },
             },
         }),
         isCursorMode ? Promise.resolve(undefined) : db.$count(productsTable, baseConditions),
@@ -500,6 +504,10 @@ export const getProducts = async (query: TProductQuery): Promise<TProductsList> 
                             with: {
                                 category: true,
                             },
+                        },
+                        variants: {
+                            where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                            orderBy: (variant, { asc }) => [asc(variant.createdAt)],
                         },
                     },
                 }),
@@ -640,6 +648,10 @@ export const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdmi
                         category: true,
                     },
                 },
+                variants: {
+                    where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                    orderBy: (variant, { asc }) => [asc(variant.createdAt)],
+                },
             },
         }),
         isCursorMode ? Promise.resolve(undefined) : db.$count(productsTable, baseConditions),
@@ -669,6 +681,10 @@ export const getAdminProducts = async (query: TAdminProductQuery): Promise<TAdmi
                             with: {
                                 category: true,
                             },
+                        },
+                        variants: {
+                            where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                            orderBy: (variant, { asc }) => [asc(variant.createdAt)],
                         },
                     },
                 }),
@@ -1303,6 +1319,10 @@ export const suggestProducts = async (query: TSuggestQuery): Promise<TProductSug
                         category: true,
                     },
                 },
+                variants: {
+                    where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                    orderBy: (variant, { asc }) => [asc(variant.createdAt)],
+                },
             },
         }),
         db.query.categoriesTable.findMany({
@@ -1354,6 +1374,10 @@ export const suggestProducts = async (query: TSuggestQuery): Promise<TProductSug
                     with: {
                         category: true,
                     },
+                },
+                variants: {
+                    where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                    orderBy: (variant, { asc }) => [asc(variant.createdAt)],
                 },
             },
         });
@@ -1480,6 +1504,10 @@ export const getRelatedProducts = async (slug: TProductSlug, limit: number = 8):
                 with: {
                     category: true,
                 },
+            },
+            variants: {
+                where: (variant, { eq, and, isNull }) => and(eq(variant.isActive, true), isNull(variant.deletedAt)),
+                orderBy: (variant, { asc }) => [asc(variant.createdAt)],
             },
         },
     });

@@ -152,11 +152,11 @@ export const buildProductConditions = (
     if (query.category) {
         conditions.push(sql`EXISTS (
             WITH RECURSIVE cat_tree AS (
-                SELECT id FROM ${categoriesTable} WHERE ${categoriesTable.slug} = ${query.category} OR ${categoriesTable.id}::text = ${query.category}
+                SELECT id FROM "categories" WHERE "categories"."slug" = ${query.category} OR "categories"."id"::text = ${query.category}
                 UNION ALL
-                SELECT c.id FROM ${categoriesTable} c JOIN cat_tree ct ON c.parent_id = ct.id
+                SELECT c.id FROM "categories" c JOIN cat_tree ct ON c.parent_id = ct.id
             )
-            SELECT 1 FROM ${productCategoriesTable} pc
+            SELECT 1 FROM "product_categories" pc
             WHERE pc.product_id = ${productsTable.id}
               AND pc.category_id IN (SELECT id FROM cat_tree)
         )`);
@@ -197,10 +197,10 @@ export const buildProductConditions = (
                     gt(productsTable.stock, 0)
                 ),
                 sql`EXISTS (
-                    SELECT 1 FROM ${productVariantsTable} pv
+                    SELECT 1 FROM "product_variants" pv
                     WHERE pv.product_id = ${productsTable.id}
                       AND pv.is_active = true
-                      AND pv.deleted_at IS NULL
+                      AND pv."deletedAt" IS NULL
                       AND (
                           pv.inventory_type = 'no_tracking'
                           OR (pv.inventory_type = 'discrete' AND pv.stock > 0)
