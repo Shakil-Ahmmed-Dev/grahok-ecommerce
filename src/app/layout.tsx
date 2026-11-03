@@ -6,6 +6,7 @@ import { CartProvider } from "@/context/cart-context";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
 import { CartSheet } from "@/components/cart/cart-sheet";
+import { FrapButton } from "@/components/layout/frap-button";
 import categoriesActions from "@/features/categories/actions";
 
 const geistSans = Geist({
@@ -20,11 +21,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "GRAHOK | Curated Modern Commerce",
+    default: "GRAHOK | Curated Retail Flagship",
     template: "%s | GRAHOK",
   },
   description:
-    "Curated everyday goods, utilitarian apparel, artisanal living, and tech essentials with nationwide doorstep delivery.",
+    "Curated everyday goods, tactile textiles, artisanal craft, and contemporary utilities with nationwide delivery.",
 };
 
 const getCachedCategories = cache(async () => {
@@ -53,6 +54,7 @@ export default async function RootLayout({
           <main className="flex-1 flex flex-col">{children}</main>
           <Footer />
           <CartSheet />
+          <FrapButton />
         </CartProvider>
       </body>
     </html>

@@ -1,60 +1,89 @@
 @import "tailwindcss";
 
 :root {
-  --background: #FAFAFA;
-  --foreground: #09090B;
-  --card: #FFFFFF;
-  --card-foreground: #09090B;
-  --popover: #FFFFFF;
-  --popover-foreground: #09090B;
-  --primary: #18181B;
-  --primary-foreground: #FAFAFA;
-  --secondary: #F4F4F5;
-  --secondary-foreground: #18181B;
-  --muted: #F4F4F5;
-  --muted-foreground: #71717A;
-  --accent: #FFF7ED;
-  --accent-foreground: #C2410C;
-  --destructive: #DC2626;
-  --destructive-foreground: #FAFAFA;
-  --border: #E4E4E7;
-  --input: #E4E4E7;
-  --ring: #18181B;
-  --radius: 0.5rem;
+  /* Warm neutral canvas & soft text tones inspired by Starbucks Design System */
+  --background: #f2f0eb;
+  --foreground: rgba(0, 0, 0, 0.87);
+  --foreground-soft: rgba(0, 0, 0, 0.58);
 
-  /* Brand / Commerce Accents */
-  --saffron: #EA580C;
-  --saffron-hover: #C2410C;
-  --status-in-stock: #059669;
-  --status-backorder: #D97706;
-  --status-out: #DC2626;
+  --card: #ffffff;
+  --card-foreground: rgba(0, 0, 0, 0.87);
+
+  --popover: #ffffff;
+  --popover-foreground: rgba(0, 0, 0, 0.87);
+
+  /* Primary interactive is Green Accent */
+  --primary: #00754A;
+  --primary-foreground: #ffffff;
+
+  /* Secondary surface is Ceramic off-white */
+  --secondary: #edebe9;
+  --secondary-foreground: rgba(0, 0, 0, 0.87);
+
+  --muted: #edebe9;
+  --muted-foreground: rgba(0, 0, 0, 0.58);
+
+  --accent: #d4e9e2;
+  --accent-foreground: #006241;
+
+  --destructive: #c82014;
+  --destructive-foreground: #ffffff;
+
+  --border: #e0ded9;
+  --input: #d6dbde;
+  --ring: #00754A;
+  --radius: 0.75rem; /* 12px card radius */
+
+  /* Dedicated 4-Tier Green & Ceremony System (.agents/DESIGN.md) */
+  --brand-green: #006241;       /* Starbucks Historic Green - H1/Headings */
+  --brand-accent: #00754A;      /* Green Accent - CTAs, interactive */
+  --brand-house: #1E3932;       /* House Green - Contrast bands, footer */
+  --brand-uplift: #2b5148;      /* Uplift mid-green */
+  --brand-mint: #d4e9e2;        /* Mint Light - Badges, valid state */
+  --brand-gold: #cba258;        /* Gold - Rewards & ceremony */
+  --brand-gold-light: #dfc49d;  /* Gold Light */
+  --brand-gold-lightest: #faf6ee; /* Gold Lightest wash */
+  --brand-ceramic: #edebe9;     /* Ceramic neutral separator */
+  --brand-cream: #f2f0eb;       /* Canvas warm cream */
+
+  /* Commerce status */
+  --status-in-stock: #00754A;
+  --status-backorder: #cba258;
+  --status-out: #c82014;
+
+  /* Shadows */
+  --shadow-card: 0 0 0.5px rgba(0, 0, 0, 0.14), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --shadow-nav: 0 1px 3px rgba(0, 0, 0, 0.1), 0 2px 2px rgba(0, 0, 0, 0.06), 0 0 2px rgba(0, 0, 0, 0.07);
+  --shadow-frap: 0 0 6px rgba(0, 0, 0, 0.24), 0 8px 12px rgba(0, 0, 0, 0.14);
 }
 
 .dark {
-  --background: #09090B;
-  --foreground: #FAFAFA;
-  --card: #18181B;
-  --card-foreground: #FAFAFA;
-  --popover: #18181B;
-  --popover-foreground: #FAFAFA;
-  --primary: #FAFAFA;
-  --primary-foreground: #18181B;
-  --secondary: #27272A;
-  --secondary-foreground: #FAFAFA;
-  --muted: #27272A;
-  --muted-foreground: #A1A1AA;
-  --accent: #27272A;
-  --accent-foreground: #FAFAFA;
-  --destructive: #7F1D1D;
-  --destructive-foreground: #FAFAFA;
-  --border: #27272A;
-  --input: #27272A;
-  --ring: #D4D4D8;
+  --background: #111b18;
+  --foreground: rgba(255, 255, 255, 0.95);
+  --foreground-soft: rgba(255, 255, 255, 0.70);
+  --card: #182823;
+  --card-foreground: rgba(255, 255, 255, 0.95);
+  --popover: #182823;
+  --popover-foreground: rgba(255, 255, 255, 0.95);
+  --primary: #00754A;
+  --primary-foreground: #ffffff;
+  --secondary: #1E3932;
+  --secondary-foreground: #ffffff;
+  --muted: #1E3932;
+  --muted-foreground: rgba(255, 255, 255, 0.70);
+  --accent: #2b5148;
+  --accent-foreground: #ffffff;
+  --destructive: #c82014;
+  --destructive-foreground: #ffffff;
+  --border: #233c35;
+  --input: #2b453e;
+  --ring: #00754A;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-foreground-soft: var(--foreground-soft);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -73,8 +102,17 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --color-saffron: var(--saffron);
-  --color-saffron-hover: var(--saffron-hover);
+  --color-brand-green: var(--brand-green);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-house: var(--brand-house);
+  --color-brand-uplift: var(--brand-uplift);
+  --color-brand-mint: var(--brand-mint);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-gold-light: var(--brand-gold-light);
+  --color-brand-gold-lightest: var(--brand-gold-lightest);
+  --color-brand-ceramic: var(--brand-ceramic);
+  --color-brand-cream: var(--brand-cream);
+
   --color-in-stock: var(--status-in-stock);
   --color-backorder: var(--status-backorder);
   --color-out-of-stock: var(--status-out);
@@ -90,7 +128,28 @@
 body {
   background-color: var(--background);
   color: var(--foreground);
+  letter-spacing: -0.01em;
   font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* Card whisper-soft elevation shadow */
+.shadow-starbucks-card {
+  box-shadow: 0 0 0.5px rgba(0, 0, 0, 0.14), 0 1px 1px rgba(0, 0, 0, 0.24);
+}
+
+/* Nav 3-layer soft lift */
+.shadow-starbucks-nav {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 2px 2px rgba(0, 0, 0, 0.06), 0 0 2px rgba(0, 0, 0, 0.07);
+}
+
+/* Floating Frap order button stacked ambient shadow */
+.shadow-starbucks-frap {
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.24), 0 8px 12px rgba(0, 0, 0, 0.14);
+}
+
+.shadow-starbucks-frap:active {
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.24), 0 4px 6px rgba(0, 0, 0, 0.10);
+  transform: scale(0.95);
 }
 
 /* Ensure currency and numbers use tabular figures */

@@ -88,34 +88,34 @@ function LoginFormContent() {
   };
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-sm">
+    <div className="w-full max-w-md rounded-xl border border-[var(--border)] bg-white p-8 shadow-starbucks-card">
       {/* Header */}
       <div className="text-center mb-6">
-        <div className="inline-flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground mb-3">
+        <div className="inline-flex size-12 items-center justify-center rounded-full bg-[var(--brand-mint)]/40 text-[var(--brand-green)] mb-3 shadow-2xs">
           <Lock className="size-5" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
+        <h1 className="text-2xl font-extrabold tracking-tight text-[var(--brand-green)]">
           {mode === "signin" ? "Welcome Back" : "Create an Account"}
         </h1>
-        <p className="text-xs text-muted-foreground mt-1.5">
+        <p className="text-xs text-[rgba(0,0,0,0.58)] mt-1.5 leading-relaxed">
           {mode === "signin"
-            ? "Sign in to access your order history, tracking, and saved addresses."
+            ? "Sign in to access your order history, tracking, and saved address book."
             : "Register to manage orders, save delivery locations, and checkout seamlessly."}
         </p>
       </div>
 
-      {/* Tab Switcher */}
-      <div className="grid grid-cols-2 rounded-lg bg-muted p-1 mb-6 text-xs font-semibold">
+      {/* Tab Switcher - Full-pill container (.agents/DESIGN.md Section 4) */}
+      <div className="grid grid-cols-2 rounded-full bg-[var(--brand-ceramic)] p-1 mb-6 text-xs font-semibold">
         <button
           type="button"
           onClick={() => {
             setMode("signin");
             setErrorMessage(null);
           }}
-          className={`py-2 rounded-md transition-colors ${
+          className={`py-2 rounded-full transition-all cursor-pointer ${
             mode === "signin"
-              ? "bg-background text-foreground shadow-xs"
-              : "text-muted-foreground hover:text-foreground"
+              ? "bg-white text-[var(--brand-green)] font-bold shadow-2xs"
+              : "text-[rgba(0,0,0,0.58)] hover:text-[rgba(0,0,0,0.87)]"
           }`}
         >
           Sign In
@@ -126,10 +126,10 @@ function LoginFormContent() {
             setMode("signup");
             setErrorMessage(null);
           }}
-          className={`py-2 rounded-md transition-colors ${
+          className={`py-2 rounded-full transition-all cursor-pointer ${
             mode === "signup"
-              ? "bg-background text-foreground shadow-xs"
-              : "text-muted-foreground hover:text-foreground"
+              ? "bg-white text-[var(--brand-green)] font-bold shadow-2xs"
+              : "text-[rgba(0,0,0,0.58)] hover:text-[rgba(0,0,0,0.87)]"
           }`}
         >
           Create Account
@@ -138,7 +138,7 @@ function LoginFormContent() {
 
       {/* Error message */}
       {errorMessage && (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive flex items-start gap-2 mb-4">
+        <div className="rounded-xl border border-[var(--destructive)]/20 bg-red-50 p-3 text-xs text-[var(--destructive)] flex items-start gap-2 mb-4">
           <AlertCircle className="size-4 shrink-0 mt-0.5" />
           <span>{errorMessage}</span>
         </div>
@@ -184,7 +184,8 @@ function LoginFormContent() {
           <Button
             type="submit"
             disabled={loading}
-            className="w-full h-11 text-sm font-semibold mt-2"
+            size="lg"
+            className="w-full h-12 text-sm font-semibold mt-3"
           >
             {loading ? (
               <>
@@ -201,11 +202,11 @@ function LoginFormContent() {
         </FieldGroup>
       </form>
 
-      <div className="mt-6 pt-6 border-t border-border text-center text-xs text-muted-foreground">
+      <div className="mt-6 pt-6 border-t border-[var(--border)] text-center text-xs text-[rgba(0,0,0,0.58)]">
         <span>By signing in, you agree to Grahok&apos;s </span>
-        <span className="text-foreground underline">Terms of Service</span>
+        <span className="text-[var(--brand-green)] font-semibold underline">Terms of Service</span>
         <span> and </span>
-        <span className="text-foreground underline">Privacy Policy</span>.
+        <span className="text-[var(--brand-green)] font-semibold underline">Privacy Policy</span>.
       </div>
     </div>
   );
@@ -213,8 +214,8 @@ function LoginFormContent() {
 
 export default function LoginPage() {
   return (
-    <div className="container mx-auto px-4 py-16 flex items-center justify-center min-h-[600px]">
-      <Suspense fallback={<Spinner className="size-8 text-primary" />}>
+    <div className="container mx-auto px-4 py-16 sm:py-24 flex items-center justify-center min-h-[600px]">
+      <Suspense fallback={<Spinner className="size-8 text-[var(--brand-accent)]" />}>
         <LoginFormContent />
       </Suspense>
     </div>

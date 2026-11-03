@@ -80,22 +80,22 @@ export default async function CategoryPage({
   const facets = productsResult.facets;
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
       {/* Breadcrumb Navigation */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-muted-foreground mb-6">
-        <Link href="/" className="hover:text-foreground transition-colors">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-[rgba(0,0,0,0.58)] mb-8">
+        <Link href="/" className="hover:text-[var(--brand-accent)] transition-colors">
           Home
         </Link>
-        <ChevronRight className="size-3.5" />
-        <Link href="/products" className="hover:text-foreground transition-colors">
+        <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
+        <Link href="/products" className="hover:text-[var(--brand-accent)] transition-colors">
           Catalog
         </Link>
         {category.breadcrumbs?.map((crumb) => (
           <span key={crumb.id} className="flex items-center gap-1.5">
-            <ChevronRight className="size-3.5" />
+            <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
             <Link
               href={`/categories/${crumb.slug}`}
-              className={crumb.slug === slug ? "font-semibold text-foreground" : "hover:text-foreground transition-colors"}
+              className={crumb.slug === slug ? "font-bold text-[var(--brand-green)]" : "hover:text-[var(--brand-accent)] transition-colors"}
             >
               {crumb.name}
             </Link>
@@ -103,17 +103,22 @@ export default async function CategoryPage({
         ))}
       </nav>
 
-      {/* Category Banner */}
-      <div className="rounded-xl border border-border bg-muted/30 p-6 sm:p-8 mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">{category.name}</h1>
+      {/* Category Banner Card */}
+      <div className="rounded-xl border border-[var(--border)] bg-white p-6 sm:p-10 mb-10 shadow-starbucks-card">
+        <span className="text-xs font-bold uppercase tracking-wider text-[var(--brand-accent)]">
+          Department
+        </span>
+        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[var(--brand-green)] mt-1">
+          {category.name}
+        </h1>
         {category.description && (
-          <p className="mt-2 text-sm text-muted-foreground max-w-2xl leading-relaxed">
+          <p className="mt-2 text-sm text-[rgba(0,0,0,0.65)] max-w-2xl leading-relaxed">
             {category.description}
           </p>
         )}
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8">
+      <div className="flex flex-col lg:flex-row gap-8 lg:gap-10">
         {/* Faceted Filters Sidebar */}
         <CatalogFilters
           categories={categories}
@@ -126,23 +131,23 @@ export default async function CategoryPage({
 
         {/* Category Main Grid */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex items-center justify-between pb-6 border-b border-border">
-            <p className="text-xs text-muted-foreground">
-              Showing <strong className="text-foreground tabular-nums">{products.length}</strong> of{" "}
-              <strong className="text-foreground tabular-nums">{meta.total ?? products.length}</strong> products
+          <div className="flex items-center justify-between pb-6 border-b border-[var(--border)]">
+            <p className="text-xs text-[rgba(0,0,0,0.58)]">
+              Showing <strong className="text-[rgba(0,0,0,0.87)] tabular-nums">{products.length}</strong> of{" "}
+              <strong className="text-[rgba(0,0,0,0.87)] tabular-nums">{meta.total ?? products.length}</strong> department items
             </p>
             <SortSelect currentSortBy={sortBy} currentSortOrder={sortOrder} />
           </div>
 
           {products.length === 0 ? (
-            <div className="py-12">
+            <div className="py-16">
               <Empty
-                icon={<PackageSearch className="size-6" />}
+                icon={<PackageSearch className="size-8 text-[var(--brand-green)]" />}
                 title={`No products currently found in ${category.name}`}
-                description="Check back soon as new inventory is frequently added, or browse our other collections."
+                description="Check back soon as new small-batch inventory is frequently added, or browse our other collections."
                 action={
                   <Button asChild variant="outline">
-                    <Link href="/products">Browse All Products</Link>
+                    <Link href="/products">Browse All Catalog</Link>
                   </Button>
                 }
               />

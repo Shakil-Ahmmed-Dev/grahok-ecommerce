@@ -59,35 +59,35 @@ export default async function ProductPage({ params }: ProductPageProps) {
   const primaryCategory = product.categories?.[0];
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Breadcrumbs */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-muted-foreground mb-8">
-        <Link href="/" className="hover:text-foreground transition-colors">
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+      {/* Breadcrumbs (.agents/DESIGN.md Section 4 PDP Breadcrumb) */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-[rgba(0,0,0,0.58)] mb-8">
+        <Link href="/" className="hover:text-[var(--brand-accent)] transition-colors">
           Home
         </Link>
-        <ChevronRight className="size-3.5" />
-        <Link href="/products" className="hover:text-foreground transition-colors">
+        <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
+        <Link href="/products" className="hover:text-[var(--brand-accent)] transition-colors">
           Catalog
         </Link>
         {primaryCategory && (
           <>
-            <ChevronRight className="size-3.5" />
+            <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
             <Link
               href={`/categories/${primaryCategory.slug}`}
-              className="hover:text-foreground transition-colors"
+              className="hover:text-[var(--brand-accent)] transition-colors"
             >
               {primaryCategory.name}
             </Link>
           </>
         )}
-        <ChevronRight className="size-3.5" />
-        <span className="font-semibold text-foreground truncate max-w-[200px] sm:max-w-none">
+        <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
+        <span className="font-bold text-[var(--brand-green)] truncate max-w-[200px] sm:max-w-none">
           {product.name}
         </span>
       </nav>
 
       {/* Main Grid: Gallery + Buy Box */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14">
         {/* Left Column: Media Gallery */}
         <div className="lg:col-span-7">
           <ProductGallery
@@ -97,22 +97,22 @@ export default async function ProductPage({ params }: ProductPageProps) {
           />
         </div>
 
-        {/* Right Column: Sticky Buy Box */}
+        {/* Right Column: Buy Box */}
         <div className="lg:col-span-5 flex flex-col gap-6">
           <div>
             {primaryCategory && (
               <Link
                 href={`/categories/${primaryCategory.slug}`}
-                className="text-xs font-semibold uppercase tracking-wider text-[var(--saffron)] hover:underline inline-block mb-1.5"
+                className="text-xs font-bold uppercase tracking-wider text-[var(--brand-accent)] hover:underline inline-block mb-1.5"
               >
                 {primaryCategory.name}
               </Link>
             )}
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground leading-snug">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-[-0.01em] text-[var(--brand-green)] leading-snug">
               {product.name}
             </h1>
             {product.shortDescription && (
-              <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+              <p className="mt-2 text-sm text-[rgba(0,0,0,0.65)] leading-relaxed">
                 {product.shortDescription}
               </p>
             )}
@@ -122,14 +122,14 @@ export default async function ProductPage({ params }: ProductPageProps) {
         </div>
       </div>
 
-      {/* Product Details & Specifications */}
+      {/* Product Overview & Specifications */}
       {product.description && (
-        <div className="mt-16 pt-12 border-t border-border">
-          <div className="max-w-3xl">
-            <h2 className="text-xl font-bold tracking-tight text-foreground mb-4">
+        <div className="mt-16 pt-12 border-t border-[var(--border)]">
+          <div className="max-w-3xl rounded-xl border border-[var(--border)] bg-white p-6 sm:p-8 shadow-starbucks-card">
+            <h2 className="text-xl font-bold tracking-tight text-[var(--brand-green)] mb-4">
               Product Overview & Specifications
             </h2>
-            <div className="prose prose-zinc dark:prose-invert text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+            <div className="prose prose-zinc text-sm text-[rgba(0,0,0,0.7)] leading-relaxed whitespace-pre-line">
               {product.description}
             </div>
           </div>
@@ -138,9 +138,9 @@ export default async function ProductPage({ params }: ProductPageProps) {
 
       {/* Related Products */}
       {relatedProducts.length > 0 && (
-        <div className="mt-20 pt-12 border-t border-border">
-          <h2 className="text-2xl font-bold tracking-tight text-foreground mb-6">
-            You May Also Like
+        <div className="mt-20 pt-12 border-t border-[var(--border)]">
+          <h2 className="text-2xl font-bold tracking-tight text-[var(--brand-green)] mb-6">
+            Complementary Goods & Pairings
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
             {relatedProducts.map((relProduct) => (

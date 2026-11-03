@@ -88,40 +88,39 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   const meta = productsResult.meta;
   const facets = productsResult.facets;
 
-  // Selected category info for title (recursive lookup for nested subcategories)
   const activeCategory = categorySlug
     ? findCategoryBySlug(categories, categorySlug)
     : null;
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Breadcrumb Navigation */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-muted-foreground mb-6">
-        <Link href="/" className="hover:text-foreground transition-colors">
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+      {/* Breadcrumb Trail (.agents/DESIGN.md Section 4 Breadcrumb) */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-[rgba(0,0,0,0.58)] mb-8">
+        <Link href="/" className="hover:text-[var(--brand-accent)] transition-colors">
           Home
         </Link>
-        <ChevronRight className="size-3.5" />
+        <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
         <Link
           href="/products"
-          className={!activeCategory && !searchQuery ? "font-semibold text-foreground" : "hover:text-foreground transition-colors"}
+          className={!activeCategory && !searchQuery ? "font-bold text-[var(--brand-green)]" : "hover:text-[var(--brand-accent)] transition-colors"}
         >
           Catalog
         </Link>
         {activeCategory && (
           <>
-            <ChevronRight className="size-3.5" />
-            <span className="font-semibold text-foreground">{activeCategory.name}</span>
+            <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
+            <span className="font-bold text-[var(--brand-green)]">{activeCategory.name}</span>
           </>
         )}
         {searchQuery && (
           <>
-            <ChevronRight className="size-3.5" />
-            <span className="font-semibold text-foreground">Search: &ldquo;{searchQuery}&rdquo;</span>
+            <ChevronRight className="size-3 text-[rgba(0,0,0,0.4)]" />
+            <span className="font-bold text-[var(--brand-green)]">Search: &ldquo;{searchQuery}&rdquo;</span>
           </>
         )}
       </nav>
 
-      <div className="flex flex-col lg:flex-row gap-8">
+      <div className="flex flex-col lg:flex-row gap-8 lg:gap-10">
         {/* Faceted Filters Sidebar */}
         <CatalogFilters
           categories={categories}
@@ -135,14 +134,14 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         {/* Catalog Main Content */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Header Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[var(--border)]">
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                {activeCategory ? activeCategory.name : searchQuery ? `Search Results for "${searchQuery}"` : "All Products"}
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-[-0.01em] text-[var(--brand-green)]">
+                {activeCategory ? activeCategory.name : searchQuery ? `Search Results for "${searchQuery}"` : "All Catalog Products"}
               </h1>
-              <p className="text-xs text-muted-foreground mt-1">
-                Showing <strong className="text-foreground tabular-nums">{products.length}</strong> of{" "}
-                <strong className="text-foreground tabular-nums">{meta.total ?? products.length}</strong> products
+              <p className="text-xs text-[rgba(0,0,0,0.58)] mt-1.5">
+                Showing <strong className="text-[rgba(0,0,0,0.87)] tabular-nums">{products.length}</strong> of{" "}
+                <strong className="text-[rgba(0,0,0,0.87)] tabular-nums">{meta.total ?? products.length}</strong> crafted essentials
               </p>
             </div>
 
@@ -153,11 +152,11 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
 
           {/* Product Grid / Empty State */}
           {products.length === 0 ? (
-            <div className="py-12">
+            <div className="py-16">
               <Empty
-                icon={<PackageSearch className="size-6" />}
+                icon={<PackageSearch className="size-8 text-[var(--brand-green)]" />}
                 title="No products matched your criteria"
-                description="Try broadening your search, resetting price ranges, or clearing category filters."
+                description="Try broadening your search term, resetting price filters, or exploring other departments."
                 action={
                   <Button asChild variant="outline">
                     <Link href="/products">Reset All Filters</Link>

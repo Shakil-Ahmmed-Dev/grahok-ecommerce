@@ -16,6 +16,7 @@ import { ProductImage } from "@/components/ui/product-image";
 import { useCart } from "@/context/cart-context";
 import { formatCurrencyBDT } from "@/lib/utils";
 
+// Offer condition / threshold to be managed in admin panel; keeping current value as requested
 const FREE_SHIPPING_THRESHOLD = 100;
 
 export function CartSheet() {
@@ -43,42 +44,42 @@ export function CartSheet() {
     <Sheet open={isOpen} onOpenChange={(open) => !open && closeCart()}>
       <SheetContent
         side="right"
-        className="flex flex-col w-full sm:max-w-md p-0 gap-0"
+        className="flex flex-col w-full sm:max-w-md p-0 gap-0 bg-[var(--brand-cream)]"
       >
-        <SheetHeader className="p-6 border-b text-left">
+        <SheetHeader className="p-6 border-b border-[var(--border)] bg-white text-left">
           <div className="flex items-center justify-between">
-            <SheetTitle className="text-lg font-semibold flex items-center gap-2">
-              <ShoppingBag className="size-5 text-primary" />
-              <span>Your Cart</span>
-              <span className="text-xs font-normal text-muted-foreground ml-1">
+            <SheetTitle className="text-lg font-bold tracking-tight text-[var(--brand-green)] flex items-center gap-2">
+              <ShoppingBag className="size-5 text-[var(--brand-accent)]" />
+              <span>Your Shopping Bag</span>
+              <span className="text-xs font-semibold text-[rgba(0,0,0,0.58)] ml-1">
                 ({itemCount} {itemCount === 1 ? "item" : "items"})
               </span>
             </SheetTitle>
           </div>
 
           {/* Free Shipping Meter */}
-          <div className="mt-3 bg-muted/60 rounded-lg p-3 text-xs">
-            <div className="flex justify-between font-medium text-foreground mb-1.5">
+          <div className="mt-4 bg-[var(--brand-ceramic)] rounded-xl p-3 text-xs">
+            <div className="flex justify-between font-semibold text-[rgba(0,0,0,0.87)] mb-1.5">
               <span>
                 {remainingForFreeShipping === 0 ? (
-                  <span className="text-emerald-700 font-semibold">
-                    Free shipping unlocked!
+                  <span className="text-[var(--brand-accent)] font-bold">
+                    Free shipping qualified!
                   </span>
                 ) : (
                   <span>
                     Add{" "}
-                    <strong className="text-foreground">
+                    <strong className="text-[var(--brand-green)] font-bold">
                       {formatCurrencyBDT(remainingForFreeShipping)}
                     </strong>{" "}
-                    more for free shipping
+                    more for free delivery
                   </span>
                 )}
               </span>
-              <span className="tabular-nums font-semibold">{freeShippingProgress}%</span>
+              <span className="tabular-nums font-bold text-[var(--brand-green)]">{freeShippingProgress}%</span>
             </div>
-            <div className="h-1.5 w-full bg-border rounded-full overflow-hidden">
+            <div className="h-2 w-full bg-white rounded-full overflow-hidden border border-black/5">
               <div
-                className="h-full bg-[var(--saffron)] transition-all duration-300"
+                className="h-full bg-[var(--brand-accent)] transition-all duration-300"
                 style={{ width: `${freeShippingProgress}%` }}
               />
             </div>
@@ -86,12 +87,12 @@ export function CartSheet() {
         </SheetHeader>
 
         {/* Content / Items */}
-        <div className="flex-1 overflow-y-auto p-6 divide-y divide-border">
+        <div className="flex-1 overflow-y-auto p-6 space-y-3">
           {items.length === 0 ? (
             <Empty
-              icon={<ShoppingBag className="size-6" />}
-              title="Your cart is empty"
-              description="Looks like you haven't added anything yet. Explore our curated collections to find your essentials."
+              icon={<ShoppingBag className="size-8 text-[var(--brand-green)]" />}
+              title="Your bag is empty"
+              description="Explore our curated departments to discover handcrafted essentials and daily utilities."
               action={
                 <Button
                   onClick={() => {
@@ -101,7 +102,7 @@ export function CartSheet() {
                   variant="outline"
                   size="sm"
                 >
-                  Explore Products
+                  Explore Catalog
                 </Button>
               }
               className="border-none p-0 min-h-[300px]"
@@ -110,9 +111,9 @@ export function CartSheet() {
             items.map((item) => (
               <div
                 key={item.variantId}
-                className="py-4 first:pt-0 last:pb-0 flex gap-4 items-start"
+                className="p-4 rounded-xl border border-[var(--border)] bg-white shadow-starbucks-card flex gap-4 items-start"
               >
-                <div className="relative size-18 rounded-md overflow-hidden bg-muted shrink-0 border">
+                <div className="relative size-18 rounded-lg overflow-hidden bg-[var(--brand-ceramic)] shrink-0 border border-[var(--border)]">
                   <ProductImage
                     src={item.imageUrl}
                     alt={item.title}
@@ -127,47 +128,47 @@ export function CartSheet() {
                     <Link
                       href={`/products/${item.slug}`}
                       onClick={closeCart}
-                      className="font-medium text-sm text-foreground hover:underline line-clamp-1"
+                      className="font-bold text-sm text-[rgba(0,0,0,0.87)] hover:text-[var(--brand-accent)] transition-colors line-clamp-1"
                     >
                       {item.title}
                     </Link>
                     <button
                       onClick={() => removeItem(item.variantId)}
                       aria-label="Remove item"
-                      className="text-muted-foreground hover:text-destructive transition-colors p-0.5"
+                      className="text-[rgba(0,0,0,0.4)] hover:text-[var(--destructive)] transition-colors p-0.5 cursor-pointer"
                     >
                       <Trash2 className="size-4" />
                     </button>
                   </div>
 
                   {item.variantTitle && (
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                    <p className="text-xs text-[rgba(0,0,0,0.58)] mt-0.5 line-clamp-1">
                       {item.variantTitle}
                     </p>
                   )}
 
-                  <div className="flex items-center justify-between mt-3">
-                    <div className="flex items-center border rounded-md">
+                  <div className="flex items-center justify-between mt-3 pt-2 border-t border-[var(--border)]/60">
+                    <div className="flex items-center border border-[var(--border)] rounded-full bg-white shadow-2xs p-0.5">
                       <button
                         onClick={() => updateQuantity(item.variantId, item.quantity - 1)}
-                        className="size-7 flex items-center justify-center hover:bg-muted text-foreground transition-colors disabled:opacity-40"
+                        className="size-6 rounded-full flex items-center justify-center hover:bg-[var(--brand-ceramic)] text-[var(--foreground)] transition-colors disabled:opacity-30 cursor-pointer"
                         aria-label="Decrease quantity"
                       >
                         <Minus className="size-3" />
                       </button>
-                      <span className="w-8 text-center text-xs font-semibold tabular-nums">
+                      <span className="w-7 text-center text-xs font-bold tabular-nums">
                         {item.quantity}
                       </span>
                       <button
                         onClick={() => updateQuantity(item.variantId, item.quantity + 1)}
-                        className="size-7 flex items-center justify-center hover:bg-muted text-foreground transition-colors disabled:opacity-40"
+                        className="size-6 rounded-full flex items-center justify-center hover:bg-[var(--brand-ceramic)] text-[var(--foreground)] transition-colors disabled:opacity-30 cursor-pointer"
                         aria-label="Increase quantity"
                       >
                         <Plus className="size-3" />
                       </button>
                     </div>
 
-                    <span className="text-sm font-semibold text-foreground tabular-nums">
+                    <span className="text-sm font-extrabold text-[var(--brand-green)] tabular-nums">
                       {formatCurrencyBDT(item.price * item.quantity)}
                     </span>
                   </div>
@@ -179,31 +180,33 @@ export function CartSheet() {
 
         {/* Footer */}
         {items.length > 0 && (
-          <div className="p-6 border-t bg-muted/20 flex flex-col gap-3">
+          <div className="p-6 border-t border-[var(--border)] bg-white flex flex-col gap-3 shadow-lg">
             <div className="flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="text-base font-semibold tabular-nums text-foreground">
+              <span className="text-[rgba(0,0,0,0.58)] font-medium">Estimated Subtotal</span>
+              <span className="text-lg font-extrabold tabular-nums text-[var(--brand-green)]">
                 {formatCurrencyBDT(subtotal)}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Taxes and delivery calculated during checkout.
+            <p className="text-xs text-[rgba(0,0,0,0.58)]">
+              Taxes and doorstep delivery calculated during checkout.
             </p>
 
-            <div className="flex flex-col gap-2 mt-2">
+            <div className="flex flex-col gap-2.5 mt-2">
               <Button
                 onClick={handleCheckout}
-                className="w-full h-11 text-base font-medium"
+                size="lg"
+                className="w-full h-12 text-sm font-semibold"
               >
-                Proceed to Checkout
-                <ArrowRight className="size-4 ml-1" />
+                <span>Proceed to Checkout</span>
+                <ArrowRight className="size-4 ml-2" />
               </Button>
               <Button
                 onClick={handleViewCart}
                 variant="outline"
-                className="w-full text-xs"
+                size="sm"
+                className="w-full text-xs font-semibold"
               >
-                View Full Cart
+                View Full Bag Details
               </Button>
             </div>
           </div>

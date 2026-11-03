@@ -84,8 +84,8 @@ export default function AccountOrdersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="pb-4 border-b border-border">
-        <h2 className="text-xl font-bold tracking-tight text-foreground">Order History</h2>
+      <div className="pb-4 border-b border-[var(--brand-green)]/10">
+        <h2 className="text-xl font-bold tracking-tight text-[var(--brand-green)]">Order History</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
           Review details, tracking timelines, and receipts for all your past purchases.
         </p>
@@ -104,11 +104,11 @@ export default function AccountOrdersPage() {
           return (
             <div
               key={order.id}
-              className="rounded-xl border border-border bg-card p-5 shadow-2xs hover:border-foreground/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+              className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 shadow-starbucks-card hover:border-[var(--brand-accent)] transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
             >
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-3">
-                  <span className="font-bold font-mono text-sm text-foreground tabular-nums">
+                  <span className="font-bold font-mono text-sm text-[var(--brand-green)] tabular-nums">
                     {order.orderNumber}
                   </span>
                   {getStatusBadge(order.status)}
@@ -126,10 +126,10 @@ export default function AccountOrdersPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between sm:justify-end gap-6 pt-2 sm:pt-0 border-t sm:border-t-0 border-border">
+              <div className="flex items-center justify-between sm:justify-end gap-6 pt-2 sm:pt-0 border-t sm:border-t-0 border-[var(--brand-green)]/10">
                 <div className="text-right">
                   <span className="text-[11px] text-muted-foreground block">Order Total</span>
-                  <span className="text-base font-bold tabular-nums text-foreground">
+                  <span className="text-base font-bold tabular-nums text-[var(--brand-green)]">
                     {formatCurrencyBDT(order.totalAmount)}
                   </span>
                 </div>

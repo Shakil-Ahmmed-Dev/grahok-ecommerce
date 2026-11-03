@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Truck, Smartphone, CreditCard, Building2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Truck, ShieldCheck } from "lucide-react";
 import {
   PAYMENT_GATEWAY_REGISTRY,
   type PaymentMethodId,
@@ -19,50 +18,35 @@ export function PaymentMethodSelector({
   onChange,
   disabled = false,
 }: PaymentMethodSelectorProps) {
-  const getIcon = (iconName: string) => {
-    switch (iconName) {
-      case "Smartphone":
-        return <Smartphone className="size-5 text-muted-foreground" />;
-      case "CreditCard":
-        return <CreditCard className="size-5 text-muted-foreground" />;
-      case "Building2":
-        return <Building2 className="size-5 text-muted-foreground" />;
-      case "Truck":
-      default:
-        return <Truck className="size-5 text-[var(--saffron)]" />;
-    }
-  };
+  // Filter for available methods so customer is not distracted by unclickable placeholders
+  const availableMethods = PAYMENT_GATEWAY_REGISTRY.filter((m) => m.isAvailable);
 
   return (
     <div className="flex flex-col gap-3">
-      {PAYMENT_GATEWAY_REGISTRY.map((method) => {
+      {availableMethods.map((method) => {
         const isSelected = value === method.id;
-        const isInteractive = method.isAvailable && !disabled;
 
         return (
           <div
             key={method.id}
             onClick={() => {
-              if (isInteractive) onChange(method.id);
+              if (!disabled) onChange(method.id);
             }}
-            className={`relative flex items-start gap-4 rounded-xl border p-4 transition-all duration-150 ${
-              !method.isAvailable
-                ? "border-border/60 bg-muted/20 opacity-65 cursor-not-allowed"
-                : isSelected
-                ? "border-primary bg-primary/[0.02] ring-1 ring-primary cursor-pointer shadow-xs"
-                : "border-border bg-card hover:border-foreground/30 hover:bg-muted/30 cursor-pointer"
+            className={`relative flex items-start gap-4 rounded-xl border p-4.5 transition-all duration-150 cursor-pointer ${
+              isSelected
+                ? "border-[var(--brand-accent)] bg-[var(--brand-mint)]/10 ring-2 ring-[var(--brand-accent)] shadow-2xs"
+                : "border-[var(--border)] bg-white hover:border-[var(--brand-accent)]/50"
             }`}
             role="radio"
             aria-checked={isSelected}
-            aria-disabled={!method.isAvailable}
           >
-            {/* Custom Radio Circle */}
+            {/* Custom Radio Circle (.agents/DESIGN.md Section 4 Option Icon) */}
             <div className="pt-0.5">
               <div
                 className={`size-4 rounded-full border flex items-center justify-center transition-colors ${
                   isSelected
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-muted-foreground/40 bg-background"
+                    ? "border-[var(--brand-accent)] bg-[var(--brand-accent)] text-white"
+                    : "border-[var(--border)] bg-white"
                 }`}
               >
                 {isSelected && <div className="size-1.5 rounded-full bg-white" />}
@@ -70,27 +54,33 @@ export function PaymentMethodSelector({
             </div>
 
             {/* Icon */}
-            <div className="shrink-0 pt-0.5">{getIcon(method.iconName)}</div>
+            <div className="shrink-0 pt-0.5">
+              <Truck className="size-5 text-[var(--brand-accent)]" />
+            </div>
 
             {/* Description */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-foreground">
+                <span className="text-sm font-bold text-[rgba(0,0,0,0.87)]">
                   {method.title}
                 </span>
-                {method.badge && (
-                  <Badge variant="secondary" className="text-[10px] py-0 px-2 font-medium">
-                    {method.badge}
-                  </Badge>
-                )}
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--brand-accent)] bg-[var(--brand-mint)]/40 px-2 py-0.5 rounded-full">
+                  Zero Upfront Fee
+                </span>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+              <p className="text-xs text-[rgba(0,0,0,0.58)] mt-1 leading-relaxed">
                 {method.subtitle}
               </p>
             </div>
           </div>
         );
       })}
+
+      {/* Reassurance note about upcoming digital channels */}
+      <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-[var(--brand-ceramic)] text-xs text-[rgba(0,0,0,0.65)] mt-1">
+        <ShieldCheck className="size-4 text-[var(--brand-accent)] shrink-0" />
+        <span>Card & Mobile Financial Services (bKash, Nagad) are currently undergoing gateway certification.</span>
+      </div>
     </div>
   );
 }

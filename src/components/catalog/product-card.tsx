@@ -63,11 +63,11 @@ export function ProductCard({ product }: ProductCardProps) {
   };
 
   return (
-    <div className="group relative flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-2xs hover:shadow-md transition-all duration-200">
+    <div className="group relative flex flex-col rounded-xl border border-[var(--border)] bg-white overflow-hidden shadow-starbucks-card hover:shadow-md transition-all duration-200">
       {/* Image Viewport */}
       <Link
         href={`/products/${product.slug}`}
-        className="relative aspect-square w-full overflow-hidden bg-muted/40 block"
+        className="relative aspect-square w-full overflow-hidden bg-[var(--brand-ceramic)] block"
       >
         <ProductImage
           src={product.featuredImageUrl}
@@ -77,42 +77,40 @@ export function ProductCard({ product }: ProductCardProps) {
           sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
         />
 
-        {/* Status Badge */}
-        <div className="absolute top-2.5 left-2.5 z-10">
-          {isOutOfStock ? (
-            <Badge variant="outOfStock" className="text-[10px] px-2 py-0.5">
+        {/* Status Badge: Only rendered for actionable exceptions (Out of stock or Backorder) */}
+        {isOutOfStock ? (
+          <div className="absolute top-3 left-3 z-10">
+            <Badge variant="outOfStock" className="px-2.5 py-0.5 text-[10px] font-semibold">
               Out of Stock
             </Badge>
-          ) : isBackorder ? (
-            <Badge variant="backorder" className="text-[10px] px-2 py-0.5">
+          </div>
+        ) : isBackorder ? (
+          <div className="absolute top-3 left-3 z-10">
+            <Badge variant="backorder" className="px-2.5 py-0.5 text-[10px] font-semibold">
               Backorder
             </Badge>
-          ) : (
-            <Badge variant="inStock" className="text-[10px] px-2 py-0.5">
-              In Stock
-            </Badge>
-          )}
-        </div>
+          </div>
+        ) : null}
       </Link>
 
       {/* Card Details */}
-      <div className="flex flex-1 flex-col p-4">
-        {/* Category info */}
+      <div className="flex flex-1 flex-col p-4 sm:p-5">
+        {/* Category Badge */}
         {product.categories?.[0] && (
-          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--brand-green)] mb-1.5">
             {product.categories[0].name}
           </span>
         )}
 
         {/* Title */}
-        <h3 className="text-sm font-semibold text-foreground line-clamp-2 hover:underline">
+        <h3 className="text-sm font-semibold text-[rgba(0,0,0,0.87)] tracking-[-0.01em] line-clamp-2 hover:text-[var(--brand-accent)] transition-colors">
           <Link href={`/products/${product.slug}`}>{product.name}</Link>
         </h3>
 
         {/* Price & Action Row */}
-        <div className="mt-auto pt-4 flex items-center justify-between gap-2">
+        <div className="mt-auto pt-4 flex items-center justify-between gap-3">
           <div>
-            <span className="text-base font-bold tabular-nums text-foreground">
+            <span className="text-base font-bold tabular-nums text-[rgba(0,0,0,0.87)]">
               {formatCurrencyBDT(product.sellPrice)}
             </span>
           </div>
@@ -123,7 +121,7 @@ export function ProductCard({ product }: ProductCardProps) {
                 asChild
                 variant="outline"
                 size="sm"
-                className="h-8 text-xs font-medium"
+                className="h-8 px-4 text-xs font-semibold"
               >
                 <Link href={`/products/${product.slug}`}>Options</Link>
               </Button>
@@ -133,12 +131,12 @@ export function ProductCard({ product }: ProductCardProps) {
                 disabled={isOutOfStock}
                 variant={added ? "secondary" : "default"}
                 size="sm"
-                className="h-8 px-3 text-xs font-medium"
-                aria-label={`Add ${product.name} to cart`}
+                className="h-8 px-3.5 text-xs font-semibold"
+                aria-label={`Add ${product.name} to bag`}
               >
                 {added ? (
                   <>
-                    <Check className="size-3.5 mr-1 text-emerald-600" />
+                    <Check className="size-3.5 mr-1 text-[var(--brand-accent)]" />
                     <span>Added</span>
                   </>
                 ) : (

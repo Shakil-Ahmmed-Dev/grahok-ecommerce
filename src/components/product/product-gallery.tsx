@@ -32,7 +32,7 @@ export function ProductGallery({
   return (
     <div className="flex flex-col gap-4">
       {/* Main Viewport */}
-      <div className="relative aspect-square w-full rounded-2xl border border-border bg-muted/30 overflow-hidden shadow-2xs">
+      <div className="relative aspect-square w-full rounded-2xl border border-[var(--border)] bg-[var(--brand-ceramic)] overflow-hidden shadow-starbucks-card">
         <ProductImage
           src={currentImage}
           alt={`${title} - View ${selectedIndex + 1}`}
@@ -54,10 +54,10 @@ export function ProductGallery({
                 type="button"
                 onClick={() => setSelectedIndex(idx)}
                 className={cn(
-                  "relative size-16 shrink-0 rounded-lg border-2 bg-muted/40 overflow-hidden transition-all duration-200",
+                  "relative size-16 shrink-0 rounded-xl border-2 bg-[var(--brand-ceramic)] overflow-hidden transition-all duration-200 cursor-pointer",
                   isSelected
-                    ? "border-primary ring-2 ring-primary/20 scale-102"
-                    : "border-border hover:border-foreground/40 opacity-70 hover:opacity-100"
+                    ? "border-[var(--brand-accent)] ring-2 ring-[var(--brand-accent)]/30 scale-102"
+                    : "border-[var(--border)] hover:border-[var(--brand-accent)]/50 opacity-70 hover:opacity-100"
                 )}
                 aria-label={`Select image ${idx + 1}`}
                 aria-current={isSelected}

@@ -1,18 +1,21 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ShieldCheck,
   AlertCircle,
   Truck,
   ArrowRight,
+  ShoppingBag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, Field, FieldLabel, FieldError, FieldDescription } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { Empty } from "@/components/ui/empty";
 import { ProductImage } from "@/components/ui/product-image";
 import { PaymentMethodSelector } from "./payment-method-selector";
 import { useCart } from "@/context/cart-context";
@@ -141,7 +144,6 @@ export function CheckoutForm() {
       errs.recipientName = "Full recipient name is required";
     }
 
-    // E.164 phone validation: ^\+[1-9]\d{1,14}$
     if (!phoneNumber.trim()) {
       errs.phoneNumber = "Phone number is required";
     } else if (!/^\+[1-9]\d{6,14}$/.test(fullPhone)) {
@@ -173,7 +175,7 @@ export function CheckoutForm() {
     }
 
     if (items.length === 0) {
-      setSubmitError("Your shopping cart is empty.");
+      setSubmitError("Your shopping bag is empty.");
       return;
     }
 
@@ -218,28 +220,19 @@ export function CheckoutForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        const errorMsg = data?.error?.message || "Failed to process checkout. Please try again.";
-        setSubmitError(errorMsg);
+        setSubmitError(data.error?.message || "Failed to process your order. Please check inputs.");
         setIsSubmitting(false);
         return;
       }
 
-      // Order created successfully
-      const createdOrder = data;
-
-      // If guest token returned, save in sessionStorage
-      if (createdOrder.guestAccessToken) {
-        try {
-          window.sessionStorage.setItem(
-            `guest_token_${createdOrder.id}`,
-            createdOrder.guestAccessToken
-          );
-        } catch {
-          // Ignore storage issues
-        }
+      const createdOrder = data.data;
+      if (!createdOrder?.id) {
+        setSubmitError("Failed to retrieve placed order confirmation.");
+        setIsSubmitting(false);
+        return;
       }
 
-      // Clear the local cart
+      // Clear local cart
       clearCart();
 
       // Navigate to order-confirmed
@@ -255,20 +248,41 @@ export function CheckoutForm() {
     }
   };
 
+  // If cart is empty on checkout page, show clear empty state
+  if (isMounted && items.length === 0) {
+    return (
+      <div className="py-16 flex flex-col items-center justify-center text-center">
+        <Empty
+          icon={<ShoppingBag className="size-10 text-[var(--brand-green)]" />}
+          title="Your Shopping Bag is Empty"
+          description="Please add items to your shopping bag before proceeding to complete an order."
+          action={
+            <Button asChild size="lg">
+              <Link href="/products">
+                <span>Explore Catalog</span>
+                <ArrowRight className="size-4 ml-2" />
+              </Link>
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
   const finalSubtotal = estimate?.subtotal ?? cartSubtotal;
   const finalShipping = estimate?.shippingFee ?? (finalSubtotal >= 100 ? 0 : 10);
   const finalTotal = estimate?.totalAmount ?? finalSubtotal + finalShipping;
 
   return (
-    <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+    <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14">
       {/* Left Column: Checkout Steps */}
       <div className="lg:col-span-7 flex flex-col gap-10">
         {/* Error Alert */}
         {submitError && (
-          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-destructive flex items-start gap-3">
+          <div className="rounded-xl border border-[var(--destructive)]/30 bg-red-50 p-4 text-[var(--destructive)] flex items-start gap-3">
             <AlertCircle className="size-5 shrink-0 mt-0.5" />
             <div className="text-xs">
-              <strong className="font-semibold block mb-0.5">Order Placement Issue</strong>
+              <strong className="font-bold block mb-0.5">Order Placement Issue</strong>
               <span>{submitError}</span>
             </div>
           </div>
@@ -276,14 +290,14 @@ export function CheckoutForm() {
 
         {/* Step 1: Contact Information */}
         <section className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-border">
-            <div className="size-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
+          <div className="flex items-center gap-2.5 pb-3 border-b border-[var(--border)]">
+            <div className="size-6 rounded-full bg-[var(--brand-green)] text-white text-xs font-bold flex items-center justify-center">
               1
             </div>
-            <h2 className="text-base font-bold text-foreground">Contact Information</h2>
+            <h2 className="text-base font-bold text-[var(--brand-green)]">Contact Information</h2>
             {session?.user && (
-              <span className="text-xs text-muted-foreground ml-auto">
-                Logged in as <strong className="text-foreground">{session.user.email}</strong>
+              <span className="text-xs text-[rgba(0,0,0,0.58)] ml-auto">
+                Logged in as <strong className="text-[rgba(0,0,0,0.87)]">{session.user.email}</strong>
               </span>
             )}
           </div>
@@ -330,11 +344,11 @@ export function CheckoutForm() {
 
         {/* Step 2: Shipping Address */}
         <section className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-border">
-            <div className="size-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
+          <div className="flex items-center gap-2.5 pb-3 border-b border-[var(--border)]">
+            <div className="size-6 rounded-full bg-[var(--brand-green)] text-white text-xs font-bold flex items-center justify-center">
               2
             </div>
-            <h2 className="text-base font-bold text-foreground">Shipping Address</h2>
+            <h2 className="text-base font-bold text-[var(--brand-green)]">Shipping Address</h2>
           </div>
 
           <FieldGroup>
@@ -352,7 +366,7 @@ export function CheckoutForm() {
             <Field invalid={Boolean(errors.phoneNumber)}>
               <FieldLabel required>Phone Number (for Courier & SMS)</FieldLabel>
               <div className="flex gap-2">
-                <div className="flex items-center justify-center px-3 rounded-md border border-input bg-muted/30 text-xs font-semibold text-foreground select-none">
+                <div className="flex items-center justify-center px-3.5 rounded-lg border border-[var(--input)] bg-[var(--brand-ceramic)] text-xs font-bold text-[rgba(0,0,0,0.87)] select-none">
                   +880
                 </div>
                 <Input
@@ -416,19 +430,19 @@ export function CheckoutForm() {
 
               <Field>
                 <FieldLabel required>Country</FieldLabel>
-                <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/20 text-xs font-medium text-foreground">
+                <div className="h-10 flex items-center px-3.5 rounded-lg border border-[var(--input)] bg-[var(--brand-ceramic)] text-xs font-semibold text-[rgba(0,0,0,0.87)]">
                   Bangladesh (BD)
                 </div>
               </Field>
             </div>
 
             {session?.user && (
-              <label className="flex items-center gap-2 pt-2 text-xs font-medium text-muted-foreground cursor-pointer select-none">
+              <label className="flex items-center gap-2 pt-2 text-xs font-semibold text-[rgba(0,0,0,0.87)] cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={saveAddress}
                   onChange={(e) => setSaveAddress(e.target.checked)}
-                  className="size-4 rounded border-border text-primary focus:ring-primary"
+                  className="size-4 rounded accent-[var(--brand-accent)] cursor-pointer"
                 />
                 <span>Save this address to my account address book</span>
               </label>
@@ -437,7 +451,7 @@ export function CheckoutForm() {
             <Field>
               <FieldLabel>Delivery Instructions or Notes (optional)</FieldLabel>
               <Input
-                placeholder="e.g. Leave with security guard or call upon arrival"
+                placeholder="e.g. Call upon arrival or leave with security"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
               />
@@ -447,11 +461,11 @@ export function CheckoutForm() {
 
         {/* Step 3: Payment Method Selector */}
         <section className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-border">
-            <div className="size-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
+          <div className="flex items-center gap-2.5 pb-3 border-b border-[var(--border)]">
+            <div className="size-6 rounded-full bg-[var(--brand-green)] text-white text-xs font-bold flex items-center justify-center">
               3
             </div>
-            <h2 className="text-base font-bold text-foreground">Payment Method</h2>
+            <h2 className="text-base font-bold text-[var(--brand-green)]">Payment Method</h2>
           </div>
 
           <PaymentMethodSelector
@@ -462,20 +476,20 @@ export function CheckoutForm() {
         </section>
       </div>
 
-      {/* Right Column: Order Summary & Placement */}
+      {/* Right Column: Order Summary Card */}
       <div className="lg:col-span-5">
-        <div className="rounded-2xl border border-border bg-card p-6 shadow-sm sticky top-24 flex flex-col gap-5">
-          <div className="flex items-center justify-between pb-3 border-b border-border">
-            <h3 className="text-lg font-bold text-foreground">Order Summary</h3>
-            {isEstimating && <Spinner className="size-4 text-muted-foreground" />}
+        <div className="rounded-xl border border-[var(--border)] bg-white p-6 shadow-starbucks-card sticky top-28 flex flex-col gap-5">
+          <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+            <h3 className="text-lg font-bold text-[var(--brand-green)]">Order Summary</h3>
+            {isEstimating && <Spinner className="size-4 text-[var(--brand-accent)]" />}
           </div>
 
           {/* Warnings */}
           {estimate?.warnings && estimate.warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex flex-col gap-1">
+            <div className="rounded-xl border border-[var(--brand-gold-light)] bg-[var(--brand-gold-lightest)] p-3 text-xs text-[var(--foreground)] flex flex-col gap-1">
               {estimate.warnings.map((w, idx) => (
                 <div key={idx} className="flex items-start gap-1.5">
-                  <AlertCircle className="size-3.5 shrink-0 mt-0.5 text-amber-600" />
+                  <AlertCircle className="size-3.5 shrink-0 mt-0.5 text-[var(--brand-gold)]" />
                   <span>{w}</span>
                 </div>
               ))}
@@ -483,10 +497,10 @@ export function CheckoutForm() {
           )}
 
           {/* Line Items List */}
-          <div className="flex flex-col divide-y divide-border max-h-60 overflow-y-auto pr-1">
+          <div className="flex flex-col divide-y divide-[var(--border)] max-h-60 overflow-y-auto pr-1">
             {items.map((item) => (
               <div key={item.variantId} className="py-3 first:pt-0 last:pb-0 flex gap-3 items-center">
-                <div className="relative size-14 rounded-lg overflow-hidden bg-muted/40 shrink-0 border border-border">
+                <div className="relative size-14 rounded-lg overflow-hidden bg-[var(--brand-ceramic)] shrink-0 border border-[var(--border)]">
                   <ProductImage
                     src={item.imageUrl}
                     alt={item.title}
@@ -496,13 +510,13 @@ export function CheckoutForm() {
                   />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground truncate">{item.title}</p>
+                  <p className="text-xs font-bold text-[rgba(0,0,0,0.87)] truncate">{item.title}</p>
                   {item.variantTitle && (
-                    <p className="text-[11px] text-muted-foreground truncate">{item.variantTitle}</p>
+                    <p className="text-[11px] text-[rgba(0,0,0,0.58)] truncate">{item.variantTitle}</p>
                   )}
-                  <p className="text-xs text-muted-foreground tabular-nums">Qty: {item.quantity}</p>
+                  <p className="text-xs text-[rgba(0,0,0,0.58)] tabular-nums">Qty: {item.quantity}</p>
                 </div>
-                <div className="text-xs font-bold tabular-nums text-foreground">
+                <div className="text-xs font-bold tabular-nums text-[var(--brand-green)]">
                   {formatCurrencyBDT(item.price * item.quantity)}
                 </div>
               </div>
@@ -512,18 +526,18 @@ export function CheckoutForm() {
           <Separator />
 
           {/* Price Breakdown */}
-          <div className="flex flex-col gap-2 text-xs">
+          <div className="flex flex-col gap-2.5 text-xs">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="font-semibold tabular-nums text-foreground">
+              <span className="text-[rgba(0,0,0,0.58)]">Subtotal</span>
+              <span className="font-bold tabular-nums text-[rgba(0,0,0,0.87)]">
                 {formatCurrencyBDT(finalSubtotal)}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Doorstep Shipping</span>
-              <span className="font-semibold tabular-nums text-foreground">
+              <span className="text-[rgba(0,0,0,0.58)]">Doorstep Delivery</span>
+              <span className="font-bold tabular-nums text-[rgba(0,0,0,0.87)]">
                 {finalShipping === 0 ? (
-                  <span className="text-emerald-700">FREE</span>
+                  <span className="text-[var(--brand-accent)] font-bold">FREE</span>
                 ) : (
                   formatCurrencyBDT(finalShipping)
                 )}
@@ -534,8 +548,8 @@ export function CheckoutForm() {
           <Separator />
 
           <div className="flex justify-between items-baseline">
-            <span className="text-base font-bold text-foreground">Total to Pay</span>
-            <span className="text-2xl font-extrabold tabular-nums text-foreground">
+            <span className="text-base font-bold text-[rgba(0,0,0,0.87)]">Total to Pay</span>
+            <span className="text-2xl font-extrabold tabular-nums text-[var(--brand-green)]">
               {formatCurrencyBDT(finalTotal)}
             </span>
           </div>
@@ -544,29 +558,29 @@ export function CheckoutForm() {
             type="submit"
             disabled={isSubmitting || items.length === 0}
             size="lg"
-            className="w-full h-12 text-sm font-semibold shadow-md"
+            className="w-full h-12 text-sm font-semibold shadow-xs"
           >
             {isSubmitting ? (
               <>
                 <Spinner data-icon="inline-start" className="mr-2" />
-                <span>Placing Your Order...</span>
+                <span>Confirming Order...</span>
               </>
             ) : (
               <>
                 <span>Confirm & Place Order</span>
-                <ArrowRight className="size-4 ml-1.5" />
+                <ArrowRight className="size-4 ml-2" />
               </>
             )}
           </Button>
 
-          <div className="flex flex-col gap-2 pt-2 text-xs text-muted-foreground border-t border-border">
+          <div className="flex flex-col gap-2 pt-3 text-xs text-[rgba(0,0,0,0.65)] border-t border-[var(--border)]">
             <div className="flex items-center gap-2">
-              <ShieldCheck className="size-3.5 text-[var(--saffron)]" />
-              <span>100% Encrypted & Safe Order Reservation</span>
+              <ShieldCheck className="size-3.5 text-[var(--brand-accent)]" />
+              <span>100% Encrypted & Safe Order Placement</span>
             </div>
             <div className="flex items-center gap-2">
-              <Truck className="size-3.5 text-[var(--saffron)]" />
-              <span>Doorstep verification & cash collection</span>
+              <Truck className="size-3.5 text-[var(--brand-accent)]" />
+              <span>Doorstep verification & cash settlement</span>
             </div>
           </div>
         </div>

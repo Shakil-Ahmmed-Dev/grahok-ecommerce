@@ -40,17 +40,17 @@ export default function AccountPrivacyPage() {
 
   return (
     <div className="flex flex-col gap-8 max-w-2xl">
-      <div className="pb-4 border-b border-border">
-        <h2 className="text-xl font-bold tracking-tight text-foreground">Privacy & Data Governance</h2>
+      <div className="pb-4 border-b border-[var(--brand-green)]/10">
+        <h2 className="text-xl font-bold tracking-tight text-[var(--brand-green)]">Privacy & Data Governance</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
           Manage your personal data portability and review our privacy commitments.
         </p>
       </div>
 
       {/* Data Portability */}
-      <div className="rounded-xl border border-border bg-card p-6 shadow-2xs flex flex-col gap-4">
+      <div className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-6 shadow-starbucks-card flex flex-col gap-4">
         <div className="flex items-start gap-3">
-          <div className="size-10 rounded-lg bg-primary/5 text-primary flex items-center justify-center shrink-0">
+          <div className="size-10 rounded-full bg-[var(--brand-mint)] text-[var(--brand-green)] flex items-center justify-center shrink-0">
             <Download className="size-5" />
           </div>
           <div>
@@ -75,7 +75,7 @@ export default function AccountPrivacyPage() {
           </Button>
 
           {downloadSuccess && (
-            <span className="text-xs text-emerald-700 font-medium flex items-center gap-1">
+            <span className="text-xs text-[var(--brand-green)] font-semibold flex items-center gap-1">
               <CheckCircle2 className="size-3.5" />
               <span>Export downloaded!</span>
             </span>
@@ -84,9 +84,9 @@ export default function AccountPrivacyPage() {
       </div>
 
       {/* Account Deletion / Right to Erasure */}
-      <div className="rounded-xl border border-border bg-card p-6 shadow-2xs flex flex-col gap-4">
+      <div className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-6 shadow-starbucks-card flex flex-col gap-4">
         <div className="flex items-start gap-3">
-          <div className="size-10 rounded-lg bg-orange-50 text-[var(--saffron)] flex items-center justify-center shrink-0">
+          <div className="size-10 rounded-full bg-[var(--brand-mint)] text-[var(--brand-green)] flex items-center justify-center shrink-0">
             <Shield className="size-5" />
           </div>
           <div>
@@ -98,15 +98,15 @@ export default function AccountPrivacyPage() {
           </div>
         </div>
 
-        <div className="rounded-lg bg-muted/40 p-4 border border-border text-xs text-muted-foreground flex flex-col gap-2">
+        <div className="rounded-xl bg-[#f2f0eb]/60 p-4 border border-[var(--brand-green)]/10 text-xs text-muted-foreground flex flex-col gap-2">
           <div className="flex items-center gap-2 text-foreground font-medium">
-            <Mail className="size-4 text-[var(--saffron)]" />
+            <Mail className="size-4 text-[var(--brand-green)]" />
             <span>Support Request Procedure</span>
           </div>
           <p className="leading-relaxed">
             Please send an account deletion request from your registered email address to{" "}
-            <strong className="text-foreground">support@grahok.com</strong> with the subject line{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 text-foreground font-mono">
+            <strong className="text-[var(--brand-green)]">support@grahok.com</strong> with the subject line{" "}
+            <code className="rounded bg-white px-1.5 py-0.5 text-foreground font-mono border border-border">
               Account Deletion Request
             </code>
             . Our compliance team verifies pending orders and processes requests within 48 business hours.

@@ -119,7 +119,7 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
       if (!res.ok) {
         throw new Error(data?.error?.message || "Failed to cancel order.");
       }
-      setOrder(data);
+      setOrder(data.data);
       setCancelModalOpen(false);
     } catch (err: unknown) {
       setCancelError(err instanceof Error ? err.message : "Failed to cancel order.");
@@ -130,89 +130,84 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <Spinner className="size-8 text-primary" />
-        <span className="text-xs text-muted-foreground font-medium">Retrieving order details...</span>
+      <div className="py-24 flex flex-col items-center justify-center gap-3">
+        <Spinner className="size-8 text-[var(--brand-accent)]" />
+        <span className="text-xs font-semibold text-[rgba(0,0,0,0.58)]">Loading verified order receipt...</span>
       </div>
     );
   }
 
   if (error || !order) {
     return (
-      <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center max-w-md mx-auto my-12">
-        <XCircle className="size-10 text-destructive mx-auto mb-3" />
-        <h2 className="text-lg font-bold text-foreground">Order Not Found</h2>
-        <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-          {error || "We could not find the specified order or you may need to sign in to access it."}
-        </p>
-        <div className="mt-6 flex justify-center gap-3">
-          <Button asChild variant="outline" size="sm">
-            <Link href="/products">Continue Shopping</Link>
-          </Button>
-          <Button asChild size="sm">
-            <Link href="/login">Sign In to Account</Link>
-          </Button>
+      <div className="py-16 max-w-md mx-auto text-center rounded-xl border border-[var(--border)] bg-white p-8 shadow-starbucks-card">
+        <div className="size-12 rounded-full bg-red-50 text-[var(--destructive)] flex items-center justify-center mx-auto mb-4">
+          <XCircle className="size-6" />
         </div>
+        <h2 className="text-xl font-bold text-[var(--brand-green)]">Order Not Located</h2>
+        <p className="text-xs text-[rgba(0,0,0,0.58)] mt-2 leading-relaxed">
+          {error || "We could not verify this order reference. Please check your link or log in."}
+        </p>
+        <Button asChild className="mt-6" size="sm">
+          <Link href="/products">Browse Flagship Catalog</Link>
+        </Button>
       </div>
     );
   }
 
-  const isCancelled = order.status === "cancelled";
-  const isCancellable = ["pending", "confirmed", "processing"].includes(order.status);
-
-  // Calculate current timeline progress
   const currentStepIdx = TIMELINE_STEPS.findIndex((s) => s.key === order.status);
+  const isCancelled = order.status === "cancelled";
+  const isCancellable = order.status === "pending" || order.status === "confirmed";
 
   return (
-    <div className="flex flex-col gap-8 max-w-4xl mx-auto">
-      {/* Top Banner */}
-      <div className="rounded-2xl border border-border bg-card p-6 sm:p-8 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-        <div className="flex items-start gap-4">
-          <div className="size-12 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="size-6" />
+    <div className="flex flex-col gap-8">
+      {/* Top Banner: Success Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-[var(--border)]">
+        <div className="flex items-center gap-4">
+          <div className="size-14 rounded-full bg-[var(--brand-mint)]/40 text-[var(--brand-accent)] flex items-center justify-center shrink-0 shadow-2xs">
+            <CheckCircle2 className="size-7" />
           </div>
           <div>
-            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-              Order Confirmed & Logged
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--brand-accent)]">
+              Order Confirmed & Placed
             </span>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground mt-0.5">
-              Thank You for Your Order!
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[var(--brand-green)] mt-0.5">
+              Thank You for Your Order
             </h1>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-[rgba(0,0,0,0.58)] mt-1">
               Your items are reserved and will be delivered straight to your doorstep.
             </p>
           </div>
         </div>
 
-        <div className="flex flex-col sm:items-end gap-1.5 bg-muted/40 p-4 rounded-xl border border-border">
-          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+        <div className="flex flex-col sm:items-end gap-1.5 bg-white p-4 rounded-xl border border-[var(--border)] shadow-starbucks-card">
+          <span className="text-[11px] font-bold text-[rgba(0,0,0,0.58)] uppercase tracking-wider">
             Order Reference
           </span>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-bold font-mono text-foreground tabular-nums">
+            <span className="text-sm font-extrabold font-mono text-[var(--brand-green)] tabular-nums">
               {order.orderNumber}
             </span>
             <button
               onClick={copyOrderNumber}
               aria-label="Copy order number"
-              className="text-muted-foreground hover:text-foreground p-1 transition-colors"
+              className="text-[rgba(0,0,0,0.4)] hover:text-[var(--brand-accent)] p-1 transition-colors cursor-pointer"
             >
-              {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+              {copied ? <Check className="size-3.5 text-[var(--brand-accent)]" /> : <Copy className="size-3.5" />}
             </button>
           </div>
         </div>
       </div>
 
       {/* Delivery Status Timeline */}
-      <div className="rounded-2xl border border-border bg-card p-6 sm:p-8 shadow-sm">
+      <div className="rounded-xl border border-[var(--border)] bg-white p-6 sm:p-8 shadow-starbucks-card">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-base font-bold text-foreground">Order & Delivery Status</h2>
+          <h2 className="text-base font-bold text-[var(--brand-green)]">Order & Delivery Status</h2>
           {isCancelled ? (
-            <Badge variant="outOfStock" className="px-3 py-1 text-xs">
+            <Badge variant="outOfStock" className="px-3 py-1 text-xs font-semibold">
               Cancelled
             </Badge>
           ) : (
-            <Badge variant="inStock" className="px-3 py-1 text-xs capitalize">
+            <Badge variant="inStock" className="px-3 py-1 text-xs font-semibold capitalize">
               {order.status}
             </Badge>
           )}
@@ -222,7 +217,7 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-900 flex items-start gap-3">
             <XCircle className="size-5 text-red-600 shrink-0 mt-0.5" />
             <div>
-              <strong className="font-semibold block mb-0.5">Order Cancelled</strong>
+              <strong className="font-bold block mb-0.5">Order Cancelled</strong>
               <span>
                 This order was cancelled. Any reserved stock has been automatically returned to
                 inventory.
@@ -232,10 +227,10 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
         ) : (
           <div className="relative flex items-center justify-between max-w-2xl mx-auto py-4">
             {/* Background line */}
-            <div className="absolute left-6 right-6 top-1/2 -translate-y-1/2 h-1 bg-muted rounded-full -z-0" />
+            <div className="absolute left-6 right-6 top-1/2 -translate-y-1/2 h-1 bg-[var(--brand-ceramic)] rounded-full -z-0" />
             {/* Active progress line */}
             <div
-              className="absolute left-6 top-1/2 -translate-y-1/2 h-1 bg-[var(--saffron)] rounded-full -z-0 transition-all duration-500"
+              className="absolute left-6 top-1/2 -translate-y-1/2 h-1 bg-[var(--brand-accent)] rounded-full -z-0 transition-all duration-500"
               style={{
                 width: `${Math.max(
                   0,
@@ -254,17 +249,17 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
                   <div
                     className={`size-10 rounded-full border-2 flex items-center justify-center transition-all ${
                       isCurrent
-                        ? "border-[var(--saffron)] bg-background text-[var(--saffron)] ring-4 ring-orange-100"
+                        ? "border-[var(--brand-accent)] bg-white text-[var(--brand-accent)] ring-4 ring-[var(--brand-mint)]/40"
                         : isPastOrCurrent
-                        ? "border-[var(--saffron)] bg-[var(--saffron)] text-white"
-                        : "border-border bg-background text-muted-foreground"
+                        ? "border-[var(--brand-accent)] bg-[var(--brand-accent)] text-white"
+                        : "border-[var(--border)] bg-white text-[rgba(0,0,0,0.4)]"
                     }`}
                   >
                     <StepIcon className="size-4" />
                   </div>
                   <span
                     className={`text-[11px] font-semibold tracking-tight ${
-                      isPastOrCurrent ? "text-foreground" : "text-muted-foreground"
+                      isPastOrCurrent ? "text-[rgba(0,0,0,0.87)]" : "text-[rgba(0,0,0,0.4)]"
                     }`}
                   >
                     {step.label}
@@ -280,15 +275,15 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left Column: Items */}
         <div className="lg:col-span-7 flex flex-col gap-6">
-          <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-            <h3 className="text-base font-bold text-foreground pb-4 border-b border-border">
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 shadow-starbucks-card">
+            <h3 className="text-base font-bold text-[var(--brand-green)] pb-4 border-b border-[var(--border)]">
               Purchased Items ({order.items?.length || 0})
             </h3>
 
-            <div className="divide-y divide-border">
+            <div className="divide-y divide-[var(--border)]">
               {order.items?.map((item: TOrderItemDTO) => (
                 <div key={item.id} className="py-4 first:pt-4 last:pb-0 flex gap-4 items-center">
-                  <div className="relative size-16 rounded-xl overflow-hidden bg-muted/40 shrink-0 border border-border">
+                  <div className="relative size-16 rounded-lg overflow-hidden bg-[var(--brand-ceramic)] shrink-0 border border-[var(--border)]">
                     <ProductImage
                       src={item.imageUrl}
                       alt={item.title}
@@ -298,12 +293,12 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
                     />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{item.title}</p>
-                    <p className="text-xs text-muted-foreground tabular-nums">
+                    <p className="text-sm font-bold text-[rgba(0,0,0,0.87)] truncate">{item.title}</p>
+                    <p className="text-xs text-[rgba(0,0,0,0.58)] tabular-nums">
                       Qty: {item.quantity} &times; {formatCurrencyBDT(item.unitPrice)}
                     </p>
                   </div>
-                  <div className="text-sm font-bold tabular-nums text-foreground">
+                  <div className="text-sm font-extrabold tabular-nums text-[var(--brand-green)]">
                     {formatCurrencyBDT(item.totalPrice)}
                   </div>
                 </div>
@@ -314,23 +309,23 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
 
         {/* Right Column: Address & Payment Summary */}
         <div className="lg:col-span-5 flex flex-col gap-6">
-          <div className="rounded-2xl border border-border bg-card p-6 shadow-sm flex flex-col gap-5">
-            <h3 className="text-base font-bold text-foreground">Delivery & Payment</h3>
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 shadow-starbucks-card flex flex-col gap-5">
+            <h3 className="text-base font-bold text-[var(--brand-green)]">Delivery & Payment</h3>
 
             {/* Address */}
             <div className="text-xs flex flex-col gap-1">
-              <span className="font-semibold text-foreground uppercase tracking-wider">
+              <span className="font-bold text-[var(--brand-green)] uppercase tracking-wider">
                 Shipping Address
               </span>
-              <p className="font-medium text-foreground">{order.shippingAddress?.recipientName}</p>
-              <p className="text-muted-foreground">{order.shippingAddress?.addressLine1}</p>
+              <p className="font-bold text-[rgba(0,0,0,0.87)]">{order.shippingAddress?.recipientName}</p>
+              <p className="text-[rgba(0,0,0,0.65)]">{order.shippingAddress?.addressLine1}</p>
               {order.shippingAddress?.addressLine2 && (
-                <p className="text-muted-foreground">{order.shippingAddress?.addressLine2}</p>
+                <p className="text-[rgba(0,0,0,0.65)]">{order.shippingAddress?.addressLine2}</p>
               )}
-              <p className="text-muted-foreground">
+              <p className="text-[rgba(0,0,0,0.65)]">
                 {order.shippingAddress?.city}, {order.shippingAddress?.postalCode}
               </p>
-              <p className="text-muted-foreground font-mono tabular-nums">
+              <p className="text-[rgba(0,0,0,0.65)] font-mono tabular-nums">
                 {order.shippingAddress?.phone}
               </p>
             </div>
@@ -339,37 +334,37 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
 
             {/* Payment Method */}
             <div className="text-xs flex flex-col gap-1">
-              <span className="font-semibold text-foreground uppercase tracking-wider">
+              <span className="font-bold text-[var(--brand-green)] uppercase tracking-wider">
                 Payment Method
               </span>
-              <p className="font-medium text-foreground capitalize">
-                {order.paymentMethod === "cod" ? "Cash on Delivery (Doorstep Payment)" : order.paymentMethod}
+              <p className="font-bold text-[rgba(0,0,0,0.87)] capitalize">
+                {order.paymentMethod === "cod" ? "Cash on Delivery (Doorstep Settlement)" : order.paymentMethod}
               </p>
-              <p className="text-muted-foreground capitalize">
-                Payment Status: <strong className="text-foreground">{order.paymentStatus}</strong>
+              <p className="text-[rgba(0,0,0,0.58)] capitalize">
+                Payment Status: <strong className="text-[var(--brand-green)]">{order.paymentStatus}</strong>
               </p>
             </div>
 
             <Separator />
 
             {/* Financial Summary */}
-            <div className="flex flex-col gap-2 text-xs">
+            <div className="flex flex-col gap-2.5 text-xs">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span className="font-semibold tabular-nums text-foreground">
+                <span className="text-[rgba(0,0,0,0.58)]">Subtotal</span>
+                <span className="font-bold tabular-nums text-[rgba(0,0,0,0.87)]">
                   {formatCurrencyBDT(order.subtotal)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Shipping Fee</span>
-                <span className="font-semibold tabular-nums text-foreground">
+                <span className="text-[rgba(0,0,0,0.58)]">Shipping Fee</span>
+                <span className="font-bold tabular-nums text-[rgba(0,0,0,0.87)]">
                   {Number(order.shippingFee) === 0 ? "FREE" : formatCurrencyBDT(order.shippingFee)}
                 </span>
               </div>
               <Separator />
               <div className="flex justify-between items-baseline pt-1">
-                <span className="text-sm font-bold text-foreground">Grand Total</span>
-                <span className="text-xl font-bold tabular-nums text-foreground">
+                <span className="text-sm font-bold text-[rgba(0,0,0,0.87)]">Grand Total</span>
+                <span className="text-2xl font-extrabold tabular-nums text-[var(--brand-green)]">
                   {formatCurrencyBDT(order.totalAmount)}
                 </span>
               </div>
@@ -382,7 +377,7 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
                   onClick={() => setCancelModalOpen(true)}
                   variant="outline"
                   size="sm"
-                  className="w-full text-xs text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20"
+                  className="w-full text-xs text-[var(--destructive)] hover:bg-red-50 hover:text-[var(--destructive)] border-red-200"
                 >
                   Cancel This Order
                 </Button>
@@ -394,26 +389,26 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
 
       {/* Cancellation Confirmation Dialog */}
       <Dialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md bg-white">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
+            <DialogTitle className="flex items-center gap-2 text-[var(--destructive)]">
               <AlertTriangle className="size-5" />
               <span>Cancel Order Confirmation</span>
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs text-[rgba(0,0,0,0.58)]">
               Are you sure you want to cancel order <strong>{order.orderNumber}</strong>? Reserved
               stock will be released immediately.
             </DialogDescription>
           </DialogHeader>
 
           {cancelError && (
-            <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive">
+            <div className="rounded-xl bg-red-50 p-3 text-xs text-[var(--destructive)]">
               {cancelError}
             </div>
           )}
 
           <div className="flex flex-col gap-2 py-2">
-            <label className="text-xs font-medium text-foreground">
+            <label className="text-xs font-semibold text-[rgba(0,0,0,0.87)]">
               Reason for cancellation (optional):
             </label>
             <input
@@ -421,7 +416,7 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
               placeholder="e.g. Ordered by mistake, changed mind"
               value={cancelReason}
               onChange={(e) => setCancelReason(e.target.value)}
-              className="h-9 px-3 rounded-md border border-input text-xs"
+              className="h-10 px-3.5 rounded-lg border border-[var(--input)] text-xs text-[var(--foreground)]"
             />
           </div>
 

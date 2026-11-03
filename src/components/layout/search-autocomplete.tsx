@@ -90,33 +90,33 @@ export function SearchAutocomplete() {
           onFocus={() => {
             if (suggestions && query.trim().length >= 2) setIsOpen(true);
           }}
-          placeholder="Search products, categories..."
-          className="h-10 w-full rounded-full border border-border bg-muted/40 pl-10 pr-10 text-sm placeholder:text-muted-foreground focus:border-foreground focus:bg-background focus:outline-none transition-colors"
+          placeholder="Search products, departments..."
+          className="h-10 w-full rounded-full border border-[var(--border)] bg-[var(--brand-ceramic)]/80 hover:bg-[var(--brand-ceramic)] focus:bg-white pl-10 pr-10 text-xs sm:text-sm text-[rgba(0,0,0,0.87)] placeholder:text-[rgba(0,0,0,0.45)] focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]/20 transition-all duration-150"
         />
-        <Search className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3.5 size-4 text-[var(--brand-green)]" />
         {isLoading && (
-          <Loader2 className="pointer-events-none absolute right-3.5 size-4 animate-spin text-muted-foreground" />
+          <Loader2 className="pointer-events-none absolute right-3.5 size-4 animate-spin text-[var(--brand-accent)]" />
         )}
       </form>
 
       {/* Suggestion Popover */}
       {isOpen && hasSuggestions && (
-        <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden animate-in fade-in-50 zoom-in-95">
+        <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl border border-[var(--border)] bg-white text-[var(--foreground)] shadow-xl overflow-hidden animate-in fade-in-50 zoom-in-95">
           {/* Categories */}
           {suggestions.categories.length > 0 && (
-            <div className="p-3 border-b border-border bg-muted/20">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-2">
-                Categories
+            <div className="p-3 border-b border-[var(--border)] bg-[var(--brand-cream)]/50">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--brand-green)] px-2">
+                Departments
               </span>
-              <div className="mt-1 flex flex-wrap gap-1.5">
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {suggestions.categories.map((cat) => (
                   <Link
                     key={cat.id}
                     href={`/categories/${cat.slug}`}
                     onClick={handleSelect}
-                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-muted transition-colors"
+                    className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold bg-white border border-[var(--border)] hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
                   >
-                    <Folder className="size-3 text-muted-foreground" />
+                    <Folder className="size-3 text-[var(--brand-green)]" />
                     <span>{cat.name}</span>
                   </Link>
                 ))}
@@ -127,7 +127,7 @@ export function SearchAutocomplete() {
           {/* Products */}
           {suggestions.products.length > 0 && (
             <div className="p-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-2 py-1 block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--brand-green)] px-2 py-1 block">
                 Products
               </span>
               <div className="flex flex-col gap-1">
@@ -136,9 +136,9 @@ export function SearchAutocomplete() {
                     key={prod.id}
                     href={`/products/${prod.slug}`}
                     onClick={handleSelect}
-                    className="flex items-center gap-3 rounded-lg p-2 hover:bg-muted transition-colors"
+                    className="flex items-center gap-3 rounded-lg p-2 hover:bg-[var(--brand-ceramic)] transition-colors"
                   >
-                    <div className="relative size-11 rounded-md overflow-hidden bg-muted shrink-0 border">
+                    <div className="relative size-11 rounded-lg overflow-hidden bg-[var(--brand-ceramic)] shrink-0 border border-[var(--border)]">
                       <ProductImage
                         src={prod.featuredImageUrl}
                         alt={prod.name}
@@ -148,14 +148,14 @@ export function SearchAutocomplete() {
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-foreground truncate">
+                      <div className="text-sm font-semibold text-[rgba(0,0,0,0.87)] truncate">
                         {prod.name}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {prod.category || "In Store"}
+                      <div className="text-xs text-[rgba(0,0,0,0.58)]">
+                        {prod.category || "Flagship Item"}
                       </div>
                     </div>
-                    <div className="text-sm font-semibold tabular-nums text-foreground">
+                    <div className="text-sm font-bold tabular-nums text-[var(--brand-green)]">
                       {formatCurrencyBDT(prod.sellPrice)}
                     </div>
                   </Link>
@@ -166,19 +166,19 @@ export function SearchAutocomplete() {
 
           {/* Tags */}
           {suggestions.tags.length > 0 && (
-            <div className="p-3 border-t border-border bg-muted/10">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-2">
+            <div className="p-3 border-t border-[var(--border)] bg-[var(--brand-cream)]/30">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--brand-green)] px-2">
                 Popular Tags
               </span>
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div className="mt-1.5 flex flex-wrap gap-1">
                 {suggestions.tags.map((tag) => (
                   <Link
                     key={tag}
                     href={`/products?search=${encodeURIComponent(tag)}`}
                     onClick={handleSelect}
-                    className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    className="flex items-center gap-1 rounded-full bg-[var(--brand-ceramic)] px-3 py-1 text-xs text-[rgba(0,0,0,0.7)] hover:bg-[var(--brand-mint)]/40 hover:text-[var(--brand-accent)] transition-colors"
                   >
-                    <Tag className="size-2.5" />
+                    <Tag className="size-2.5 text-[var(--brand-accent)]" />
                     <span>{tag}</span>
                   </Link>
                 ))}
@@ -187,10 +187,10 @@ export function SearchAutocomplete() {
           )}
 
           {/* Bottom All Results */}
-          <div className="border-t border-border p-2 bg-muted/30">
+          <div className="border-t border-[var(--border)] p-2 bg-[var(--brand-ceramic)]/50">
             <button
               onClick={handleSubmit}
-              className="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-xs font-medium text-primary hover:bg-muted transition-colors"
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-bold text-[var(--brand-accent)] hover:bg-white transition-colors cursor-pointer"
             >
               <span>View all results for &ldquo;{query}&rdquo;</span>
               <ArrowRight className="size-3.5" />

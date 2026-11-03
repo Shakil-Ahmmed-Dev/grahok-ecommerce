@@ -112,52 +112,46 @@ export function VariantSelector({ product }: VariantSelectorProps) {
   return (
     <div className="flex flex-col gap-6">
       {/* Price & Status Row */}
-      <div className="flex items-baseline justify-between gap-4 border-b border-border pb-6">
+      <div className="flex items-baseline justify-between gap-4 border-b border-[var(--border)] pb-6">
         <div className="flex flex-col gap-1">
-          <div className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground tabular-nums">
+          <div className="text-3xl sm:text-4xl font-extrabold tracking-[-0.01em] text-[var(--brand-green)] tabular-nums">
             {formatCurrencyBDT(currentPrice)}
           </div>
-          {currentSku && (
-            <span className="text-xs font-mono text-muted-foreground uppercase">
-              SKU: {currentSku}
-            </span>
-          )}
         </div>
 
         <div>
           {isOutOfStock ? (
-            <Badge variant="outOfStock" className="px-3 py-1 text-xs">
+            <Badge variant="outOfStock" className="px-3 py-1 text-xs font-semibold">
               Out of Stock
             </Badge>
           ) : isBackorder ? (
-            <Badge variant="backorder" className="px-3 py-1 text-xs font-medium">
+            <Badge variant="backorder" className="px-3 py-1 text-xs font-semibold">
               Available on Backorder
             </Badge>
           ) : (
-            <Badge variant="inStock" className="px-3 py-1 text-xs">
-              In Stock {currentStock !== null && `(${currentStock} available)`}
+            <Badge variant="inStock" className="px-3 py-1 text-xs font-semibold">
+              In Stock {currentStock !== null && `(${currentStock} ready)`}
             </Badge>
           )}
         </div>
       </div>
 
       {isBackorder && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-          <strong>Backorder Note:</strong> This item is currently awaiting restock and will dispatch
-          as soon as inventory arrives.
+        <div className="rounded-xl border border-[var(--brand-gold-light)] bg-[var(--brand-gold-lightest)] p-3.5 text-xs text-[var(--foreground)]">
+          <strong className="text-[var(--brand-gold)] font-bold">Backorder Note:</strong> This item is currently in handcrafted small batches and will dispatch as soon as the next run finishes.
         </div>
       )}
 
-      {/* Dynamic Option Selectors */}
+      {/* Dynamic Option Selectors (Pill geometry .agents/DESIGN.md) */}
       {product.options && product.options.length > 0 && (
         <div className="flex flex-col gap-5">
           {product.options.map((opt) => (
             <div key={opt.id} className="flex flex-col gap-2.5">
               <div className="flex justify-between items-center text-xs">
-                <span className="font-semibold text-foreground uppercase tracking-wider">
+                <span className="font-bold uppercase tracking-wider text-[var(--brand-green)]">
                   {opt.name}
                 </span>
-                <span className="text-muted-foreground font-medium">
+                <span className="text-[rgba(0,0,0,0.58)] font-medium">
                   {selectedOptions[opt.name] || "Select"}
                 </span>
               </div>
@@ -170,10 +164,10 @@ export function VariantSelector({ product }: VariantSelectorProps) {
                       key={val.id}
                       type="button"
                       onClick={() => handleOptionChange(opt.name, val.value)}
-                      className={`min-w-12 h-9 px-3.5 rounded-lg text-xs font-medium border transition-all duration-150 select-none ${
+                      className={`min-w-14 h-9 px-4 rounded-full text-xs font-semibold border transition-all duration-150 select-none cursor-pointer active:scale-95 ${
                         isSelected
-                          ? "border-primary bg-primary text-primary-foreground shadow-xs ring-2 ring-primary/20"
-                          : "border-border bg-card text-foreground hover:bg-muted hover:border-foreground/40"
+                          ? "border-[var(--brand-accent)] bg-[var(--brand-accent)] text-white shadow-2xs"
+                          : "border-[var(--border)] bg-white text-[rgba(0,0,0,0.87)] hover:border-[var(--brand-accent)]"
                       }`}
                     >
                       {val.value}
@@ -187,29 +181,30 @@ export function VariantSelector({ product }: VariantSelectorProps) {
       )}
 
       {/* Quantity & Actions */}
-      <div className="flex flex-col gap-4 pt-2">
+      <div className="flex flex-col gap-5 pt-2">
         <div className="flex items-center gap-4">
-          <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+          <span className="text-xs font-bold uppercase tracking-wider text-[var(--brand-green)]">
             Quantity
           </span>
-          <div className="flex items-center border rounded-lg bg-card shadow-2xs">
+          {/* Numeric Stepper (.agents/DESIGN.md Section 4) */}
+          <div className="flex items-center border border-[var(--border)] rounded-full bg-white shadow-2xs p-0.5">
             <button
               type="button"
               onClick={() => handleQuantityChange(-1)}
               disabled={quantity <= 1 || isOutOfStock}
-              className="size-9 flex items-center justify-center hover:bg-muted text-foreground transition-colors disabled:opacity-40"
+              className="size-8 rounded-full flex items-center justify-center hover:bg-[var(--brand-ceramic)] text-[var(--foreground)] transition-colors disabled:opacity-30 cursor-pointer"
               aria-label="Decrease quantity"
             >
               <Minus className="size-3.5" />
             </button>
-            <span className="w-12 text-center text-sm font-semibold tabular-nums text-foreground">
+            <span className="w-10 text-center text-sm font-bold tabular-nums text-[var(--foreground)]">
               {quantity}
             </span>
             <button
               type="button"
               onClick={() => handleQuantityChange(1)}
               disabled={(!allowBackorder && currentStock !== null && quantity >= currentStock) || isOutOfStock}
-              className="size-9 flex items-center justify-center hover:bg-muted text-foreground transition-colors disabled:opacity-40"
+              className="size-8 rounded-full flex items-center justify-center hover:bg-[var(--brand-ceramic)] text-[var(--foreground)] transition-colors disabled:opacity-30 cursor-pointer"
               aria-label="Increase quantity"
             >
               <Plus className="size-3.5" />
@@ -217,64 +212,47 @@ export function VariantSelector({ product }: VariantSelectorProps) {
           </div>
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Buttons: 50px pill buttons */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
           <Button
             type="button"
             onClick={handleAddToCart}
             disabled={isOutOfStock || isAdding}
-            className="h-12 text-sm font-semibold shadow-sm"
+            size="lg"
+            className="h-12 text-sm font-semibold shadow-xs"
           >
             <ShoppingBag className="size-4 mr-2" />
-            <span>{isOutOfStock ? "Out of Stock" : "Add to Cart"}</span>
+            <span>{isOutOfStock ? "Out of Stock" : "Add to Bag"}</span>
           </Button>
 
           <Button
             type="button"
             onClick={handleBuyNow}
             disabled={isOutOfStock}
-            variant="saffron"
-            className="h-12 text-sm font-semibold shadow-sm"
+            variant="dark"
+            size="lg"
+            className="h-12 text-sm font-semibold shadow-xs"
           >
             <Zap className="size-4 mr-1.5" />
-            <span>Buy Now</span>
+            <span>Instant Checkout</span>
           </Button>
         </div>
       </div>
 
-      {/* Value Trust Details */}
-      <div className="rounded-xl border border-border bg-muted/30 p-4 mt-2 flex flex-col gap-3 text-xs text-muted-foreground">
-        <div className="flex items-center gap-2.5">
-          <Truck className="size-4 text-[var(--saffron)] shrink-0" />
+      {/* Value Trust Details Card */}
+      <div className="rounded-xl border border-[var(--border)] bg-white p-4.5 mt-2 flex flex-col gap-3 text-xs text-[rgba(0,0,0,0.65)] shadow-starbucks-card">
+        <div className="flex items-center gap-3">
+          <Truck className="size-4 text-[var(--brand-accent)] shrink-0" />
           <span>Nationwide door delivery across all 64 districts</span>
         </div>
-        <div className="flex items-center gap-2.5">
-          <ShieldCheck className="size-4 text-[var(--saffron)] shrink-0" />
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="size-4 text-[var(--brand-accent)] shrink-0" />
           <span>100% Genuine product & encrypted checkout</span>
         </div>
-        <div className="flex items-center gap-2.5">
-          <RotateCcw className="size-4 text-[var(--saffron)] shrink-0" />
+        <div className="flex items-center gap-3">
+          <RotateCcw className="size-4 text-[var(--brand-accent)] shrink-0" />
           <span>7-day simple replacement guarantee</span>
         </div>
-      </div>
-
-      {/* Sticky Mobile Purchase Bar */}
-      <div className="fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 p-3 backdrop-blur-md sm:hidden flex items-center justify-between gap-3 shadow-lg">
-        <div className="flex flex-col min-w-0">
-          <span className="text-xs text-muted-foreground truncate">{product.name}</span>
-          <span className="text-base font-bold tabular-nums text-foreground">
-            {formatCurrencyBDT(currentPrice)}
-          </span>
-        </div>
-        <Button
-          onClick={handleAddToCart}
-          disabled={isOutOfStock}
-          size="sm"
-          className="h-10 px-5 text-xs font-semibold shrink-0"
-        >
-          <ShoppingBag className="size-3.5 mr-1.5" />
-          <span>{isOutOfStock ? "Sold Out" : "Add to Cart"}</span>
-        </Button>
       </div>
     </div>
   );

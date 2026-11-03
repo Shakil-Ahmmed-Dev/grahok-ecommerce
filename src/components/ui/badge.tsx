@@ -3,25 +3,28 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold tracking-[-0.01em] transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
+          "border-transparent bg-[var(--brand-accent)] text-white shadow-2xs",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-transparent bg-[var(--brand-ceramic)] text-[var(--foreground)]",
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
-        outline: "text-foreground border-border",
+          "border-transparent bg-[var(--destructive)] text-white shadow-2xs",
+        outline:
+          "text-[var(--foreground)] border-[var(--border)] bg-card",
         inStock:
-          "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-400",
+          "border-[var(--brand-mint)] bg-[var(--brand-mint)]/40 text-[var(--brand-accent)] dark:bg-[var(--brand-mint)]/20",
         backorder:
-          "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-400",
+          "border-[var(--brand-gold-light)] bg-[var(--brand-gold-lightest)] text-[var(--brand-gold)] dark:bg-amber-950/40 dark:text-amber-300",
         outOfStock:
-          "border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-400",
-        saffron:
-          "border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/40 dark:text-orange-400",
+          "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300",
+        gold:
+          "border-[var(--brand-gold)] bg-transparent text-[var(--brand-gold)]",
+        house:
+          "border-transparent bg-[var(--brand-house)] text-white",
       },
     },
     defaultVariants: {

@@ -92,31 +92,31 @@ export default function AccountOverviewPage() {
     <div className="flex flex-col gap-8">
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-border bg-card p-5 shadow-2xs">
+        <div className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 shadow-starbucks-card">
           <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
             Total Orders
           </span>
-          <div className="text-2xl font-bold tracking-tight text-foreground tabular-nums mt-1">
+          <div className="text-2xl font-bold tracking-tight text-[var(--brand-green)] tabular-nums mt-1">
             {customer?.totalOrders ?? 0}
           </div>
           <p className="text-[11px] text-muted-foreground mt-0.5">Purchases placed to date</p>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-5 shadow-2xs">
+        <div className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 shadow-starbucks-card">
           <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
             Total Spent
           </span>
-          <div className="text-2xl font-bold tracking-tight text-foreground tabular-nums mt-1">
+          <div className="text-2xl font-bold tracking-tight text-[var(--brand-green)] tabular-nums mt-1">
             {formatCurrencyBDT(customer?.totalSpent ?? 0)}
           </div>
           <p className="text-[11px] text-muted-foreground mt-0.5">Across all confirmed orders</p>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-5 shadow-2xs">
+        <div className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 shadow-starbucks-card">
           <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
             Account Status
           </span>
-          <div className="text-2xl font-bold tracking-tight text-emerald-700 capitalize mt-1">
+          <div className="text-2xl font-bold tracking-tight text-[var(--brand-accent)] capitalize mt-1">
             {customer?.status ?? "Active"}
           </div>
           <p className="text-[11px] text-muted-foreground mt-0.5">Full self-service access</p>
@@ -124,16 +124,16 @@ export default function AccountOverviewPage() {
       </div>
 
       {/* Profile Details Form */}
-      <div className="rounded-xl border border-border bg-card p-6 shadow-2xs">
-        <div className="flex items-center justify-between pb-4 border-b border-border mb-6">
+      <div className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-6 shadow-starbucks-card">
+        <div className="flex items-center justify-between pb-4 border-b border-[var(--brand-green)]/10 mb-6">
           <div>
-            <h2 className="text-base font-bold text-foreground">Personal Profile</h2>
+            <h2 className="text-base font-bold text-[var(--brand-green)]">Personal Profile</h2>
             <p className="text-xs text-muted-foreground">
               Update your customer contact details and delivery phone number.
             </p>
           </div>
           {saveSuccess && (
-            <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md">
+            <span className="text-xs font-semibold text-[var(--brand-green)] bg-[var(--brand-mint)] px-3 py-1 rounded-full">
               Changes Saved!
             </span>
           )}
@@ -162,7 +162,7 @@ export default function AccountOverviewPage() {
 
             <Field>
               <FieldLabel>Email Address</FieldLabel>
-              <Input value={customer?.email ?? ""} disabled className="bg-muted/40" />
+              <Input value={customer?.email ?? ""} disabled className="bg-[#f2f0eb]/60" />
             </Field>
 
             <Field>
@@ -187,14 +187,14 @@ export default function AccountOverviewPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Link
           href="/account/orders"
-          className="flex items-center justify-between rounded-xl border border-border bg-card p-5 hover:border-foreground/30 hover:shadow-2xs transition-all"
+          className="flex items-center justify-between rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 hover:border-[var(--brand-accent)] hover:shadow-starbucks-card transition-all"
         >
           <div className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
-              <Package className="size-5 text-foreground" />
+            <div className="size-10 rounded-full bg-[var(--brand-mint)] flex items-center justify-center text-[var(--brand-green)]">
+              <Package className="size-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-sm text-foreground">Order History & Tracking</h3>
+              <h3 className="font-semibold text-sm text-[var(--brand-green)]">Order History & Tracking</h3>
               <p className="text-xs text-muted-foreground">Review past orders and track parcels</p>
             </div>
           </div>
@@ -203,14 +203,14 @@ export default function AccountOverviewPage() {
 
         <Link
           href="/account/addresses"
-          className="flex items-center justify-between rounded-xl border border-border bg-card p-5 hover:border-foreground/30 hover:shadow-2xs transition-all"
+          className="flex items-center justify-between rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 hover:border-[var(--brand-accent)] hover:shadow-starbucks-card transition-all"
         >
           <div className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
-              <MapPin className="size-5 text-foreground" />
+            <div className="size-10 rounded-full bg-[var(--brand-mint)] flex items-center justify-center text-[var(--brand-green)]">
+              <MapPin className="size-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-sm text-foreground">Saved Address Book</h3>
+              <h3 className="font-semibold text-sm text-[var(--brand-green)]">Saved Address Book</h3>
               <p className="text-xs text-muted-foreground">Manage doorstep delivery locations</p>
             </div>
           </div>

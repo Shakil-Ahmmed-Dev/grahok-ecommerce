@@ -176,9 +176,9 @@ export default function AccountAddressesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between pb-4 border-b border-border">
+      <div className="flex items-center justify-between pb-4 border-b border-[var(--brand-green)]/10">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-foreground">Address Book</h2>
+          <h2 className="text-xl font-bold tracking-tight text-[var(--brand-green)]">Address Book</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Manage your saved delivery locations for fast 1-click checkout.
           </p>
@@ -207,11 +207,11 @@ export default function AccountAddressesPage() {
           {addresses.map((addr) => (
             <div
               key={addr.id}
-              className="rounded-xl border border-border bg-card p-5 shadow-2xs flex flex-col justify-between gap-4"
+              className="rounded-xl border border-[var(--brand-green)]/10 bg-white p-5 shadow-starbucks-card flex flex-col justify-between gap-4"
             >
               <div className="flex flex-col gap-1.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-bold text-sm text-foreground">{addr.recipientName}</h3>
+                  <h3 className="font-bold text-sm text-[var(--brand-green)]">{addr.recipientName}</h3>
                   <div className="flex items-center gap-1.5">
                     {addr.isDefaultShipping && (
                       <Badge variant="inStock" className="text-[10px] py-0 px-2">
@@ -236,12 +236,12 @@ export default function AccountAddressesPage() {
                 <p className="text-muted-foreground font-mono tabular-nums mt-1">{addr.phone}</p>
               </div>
 
-              <div className="pt-3 border-t border-border flex items-center justify-between text-xs">
+              <div className="pt-3 border-t border-[var(--brand-green)]/10 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
                   {!addr.isDefaultShipping && (
                     <button
                       onClick={() => handleSetDefault(addr.id, "shipping")}
-                      className="text-muted-foreground hover:text-foreground underline transition-colors"
+                      className="text-muted-foreground hover:text-[var(--brand-green)] underline transition-colors"
                     >
                       Make Default Shipping
                     </button>

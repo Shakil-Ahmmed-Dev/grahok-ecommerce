@@ -40,59 +40,58 @@ export function Header({ categories = [] }: HeaderProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Top level categories to display in main nav
   const topCategories = categories.slice(0, 5);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/80">
-      {/* Top utility ticker */}
-      <div className="bg-primary text-primary-foreground px-4 py-1.5 text-center text-xs font-medium">
-        <span>Fast Nationwide Doorstep Delivery &middot; 100% Encrypted & Secure Checkout</span>
+    <header className="sticky top-0 z-40 w-full border-b border-[var(--border)] bg-white/95 backdrop-blur-md shadow-starbucks-nav">
+      {/* Top Utility Strip */}
+      <div className="bg-[var(--brand-house)] text-white px-4 py-1.5 text-center text-xs font-medium tracking-tight">
+        <span>Curated Everyday Goods &middot; Fast Nationwide Doorstep Delivery</span>
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between gap-4">
-          {/* Mobile hamburger menu */}
+        <div className="flex h-18 items-center justify-between gap-4">
+          {/* Mobile menu trigger */}
           <div className="flex items-center gap-2 lg:hidden">
             <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Open menu">
-                  <Menu className="size-5" />
+                <Button variant="ghost" size="iconSm" aria-label="Open navigation menu">
+                  <Menu className="size-5 text-[rgba(0,0,0,0.87)]" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-[300px] p-6">
-                <SheetHeader className="text-left border-b pb-4">
-                  <SheetTitle className="font-bold text-xl tracking-tight">
-                    GRAHOK<span className="text-[var(--saffron)]">.</span>
+              <SheetContent side="left" className="w-[310px] p-6 bg-[var(--brand-cream)]">
+                <SheetHeader className="text-left border-b border-[var(--border)] pb-4">
+                  <SheetTitle className="font-bold text-2xl tracking-tighter text-[var(--brand-green)]">
+                    GRAHOK
                   </SheetTitle>
                 </SheetHeader>
-                <nav className="flex flex-col gap-3 mt-6">
+                <nav className="flex flex-col gap-2 mt-6">
                   <Link
                     href="/"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="text-base font-medium hover:text-[var(--saffron)] transition-colors py-1"
+                    className="text-base font-semibold text-[rgba(0,0,0,0.87)] hover:text-[var(--brand-accent)] transition-colors py-1.5"
                   >
                     Home
                   </Link>
                   <Link
                     href="/products"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="text-base font-medium hover:text-[var(--saffron)] transition-colors py-1"
+                    className="text-base font-semibold text-[rgba(0,0,0,0.87)] hover:text-[var(--brand-accent)] transition-colors py-1.5"
                   >
-                    All Products
+                    All Catalog
                   </Link>
 
                   {topCategories.length > 0 && (
-                    <div className="mt-4 pt-4 border-t flex flex-col gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Categories
+                    <div className="mt-4 pt-4 border-t border-[var(--border)] flex flex-col gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-[var(--brand-green)]">
+                        Featured Departments
                       </span>
                       {topCategories.map((cat) => (
                         <Link
                           key={cat.id}
                           href={`/categories/${cat.slug}`}
                           onClick={() => setMobileMenuOpen(false)}
-                          className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
+                          className="text-sm font-medium text-[rgba(0,0,0,0.87)] hover:text-[var(--brand-accent)] transition-colors py-1"
                         >
                           {cat.name}
                         </Link>
@@ -100,13 +99,13 @@ export function Header({ categories = [] }: HeaderProps) {
                     </div>
                   )}
 
-                  <div className="mt-6 pt-4 border-t flex flex-col gap-2">
+                  <div className="mt-6 pt-4 border-t border-[var(--border)] flex flex-col gap-2">
                     {session?.user ? (
                       <>
                         <Link
                           href="/account"
                           onClick={() => setMobileMenuOpen(false)}
-                          className="text-sm font-medium hover:text-[var(--saffron)] transition-colors py-1"
+                          className="text-sm font-semibold text-[var(--brand-green)] hover:text-[var(--brand-accent)] transition-colors py-1"
                         >
                           Account Dashboard
                         </Link>
@@ -115,7 +114,7 @@ export function Header({ categories = [] }: HeaderProps) {
                             setMobileMenuOpen(false);
                             signOut();
                           }}
-                          className="text-left text-sm font-medium text-destructive hover:underline py-1"
+                          className="text-left text-sm font-semibold text-[var(--destructive)] hover:underline py-1 cursor-pointer"
                         >
                           Sign Out
                         </button>
@@ -124,7 +123,7 @@ export function Header({ categories = [] }: HeaderProps) {
                       <Link
                         href="/login"
                         onClick={() => setMobileMenuOpen(false)}
-                        className="text-sm font-medium hover:text-[var(--saffron)] transition-colors py-1"
+                        className="text-sm font-semibold text-[var(--brand-accent)] hover:underline py-1"
                       >
                         Sign In / Register
                       </Link>
@@ -135,20 +134,21 @@ export function Header({ categories = [] }: HeaderProps) {
             </Sheet>
           </div>
 
-          {/* Brand Logo */}
+          {/* Brand Wordmark Logo */}
           <Link href="/" className="flex items-center gap-1 shrink-0 group">
-            <span className="font-bold text-2xl tracking-tighter text-foreground group-hover:text-primary transition-colors">
+            <span className="font-extrabold text-2xl tracking-tighter text-[var(--brand-green)] transition-colors">
               GRAHOK
             </span>
-            <span className="size-2 rounded-full bg-[var(--saffron)] group-hover:scale-125 transition-transform" />
           </Link>
 
-          {/* Desktop Nav Links */}
-          <nav className="hidden lg:flex items-center gap-6 text-sm font-medium">
+          {/* Desktop Navigation */}
+          <nav className="hidden lg:flex items-center gap-7 text-sm font-semibold tracking-[-0.01em]">
             <Link
               href="/products"
-              className={`transition-colors hover:text-foreground ${
-                pathname === "/products" ? "text-foreground font-semibold" : "text-muted-foreground"
+              className={`transition-colors hover:text-[var(--brand-accent)] ${
+                pathname === "/products"
+                  ? "text-[var(--brand-green)] border-b-2 border-[var(--brand-green)] pb-0.5"
+                  : "text-[rgba(0,0,0,0.87)]"
               }`}
             >
               Catalog
@@ -157,10 +157,10 @@ export function Header({ categories = [] }: HeaderProps) {
               <Link
                 key={cat.id}
                 href={`/categories/${cat.slug}`}
-                className={`transition-colors hover:text-foreground ${
+                className={`transition-colors hover:text-[var(--brand-accent)] ${
                   pathname === `/categories/${cat.slug}`
-                    ? "text-foreground font-semibold"
-                    : "text-muted-foreground"
+                    ? "text-[var(--brand-green)] border-b-2 border-[var(--brand-green)] pb-0.5"
+                    : "text-[rgba(0,0,0,0.87)]"
                 }`}
               >
                 {cat.name}
@@ -168,14 +168,14 @@ export function Header({ categories = [] }: HeaderProps) {
             ))}
           </nav>
 
-          {/* Search bar */}
+          {/* Search Autocomplete */}
           <div className="flex-1 max-w-sm hidden sm:block">
             <SearchAutocomplete />
           </div>
 
-          {/* Right Action Icons */}
-          <div className="flex items-center gap-2">
-            {/* User Account Menu */}
+          {/* Right Action Cluster */}
+          <div className="flex items-center gap-3">
+            {/* Account Trigger */}
             <div ref={userMenuRef} className="relative">
               {session?.user ? (
                 <div className="relative">
@@ -183,10 +183,10 @@ export function Header({ categories = [] }: HeaderProps) {
                     variant="ghost"
                     size="sm"
                     onClick={() => setUserMenuOpen((prev) => !prev)}
-                    className="flex items-center gap-2 text-xs font-medium"
+                    className="flex items-center gap-2 text-xs font-semibold"
                     aria-label="User account menu"
                   >
-                    <User className="size-4" />
+                    <User className="size-4 text-[var(--brand-green)]" />
                     <span className="hidden md:inline-block max-w-[100px] truncate">
                       {session.user.name || "Account"}
                     </span>
@@ -194,41 +194,43 @@ export function Header({ categories = [] }: HeaderProps) {
                   </Button>
 
                   {userMenuOpen && (
-                    <div className="absolute right-0 top-full mt-2 w-48 rounded-lg border border-border bg-popover p-1 shadow-lg z-50 text-xs">
-                      <div className="px-3 py-2 border-b border-border">
-                        <p className="font-medium text-foreground truncate">
+                    <div className="absolute right-0 top-full mt-2 w-52 rounded-xl border border-[var(--border)] bg-white p-2 shadow-lg z-50 text-xs">
+                      <div className="px-3 py-2 border-b border-[var(--border)]">
+                        <p className="font-bold text-[rgba(0,0,0,0.87)] truncate">
                           {session.user.name || "User"}
                         </p>
-                        <p className="text-muted-foreground truncate">{session.user.email}</p>
+                        <p className="text-[rgba(0,0,0,0.58)] truncate">{session.user.email}</p>
                       </div>
-                      <Link
-                        href="/account"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="flex w-full items-center px-3 py-2 rounded-md hover:bg-muted text-foreground transition-colors"
-                      >
-                        Account Dashboard
-                      </Link>
-                      <Link
-                        href="/account/orders"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="flex w-full items-center px-3 py-2 rounded-md hover:bg-muted text-foreground transition-colors"
-                      >
-                        Order History
-                      </Link>
-                      <Link
-                        href="/account/addresses"
-                        onClick={() => setUserMenuOpen(false)}
-                        className="flex w-full items-center px-3 py-2 rounded-md hover:bg-muted text-foreground transition-colors"
-                      >
-                        Address Book
-                      </Link>
-                      <div className="border-t border-border my-1" />
+                      <div className="py-1">
+                        <Link
+                          href="/account"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex w-full items-center px-3 py-2 rounded-lg hover:bg-[var(--brand-ceramic)] text-[rgba(0,0,0,0.87)] font-medium transition-colors"
+                        >
+                          Account Dashboard
+                        </Link>
+                        <Link
+                          href="/account/orders"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex w-full items-center px-3 py-2 rounded-lg hover:bg-[var(--brand-ceramic)] text-[rgba(0,0,0,0.87)] font-medium transition-colors"
+                        >
+                          Order History
+                        </Link>
+                        <Link
+                          href="/account/addresses"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex w-full items-center px-3 py-2 rounded-lg hover:bg-[var(--brand-ceramic)] text-[rgba(0,0,0,0.87)] font-medium transition-colors"
+                        >
+                          Address Book
+                        </Link>
+                      </div>
+                      <div className="border-t border-[var(--border)] pt-1" />
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
                           signOut();
                         }}
-                        className="flex w-full items-center gap-2 px-3 py-2 rounded-md hover:bg-destructive/10 text-destructive transition-colors text-left"
+                        className="flex w-full items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 text-[var(--destructive)] transition-colors text-left font-medium cursor-pointer"
                       >
                         <LogOut className="size-3.5" />
                         <span>Sign Out</span>
@@ -237,26 +239,26 @@ export function Header({ categories = [] }: HeaderProps) {
                   )}
                 </div>
               ) : (
-                <Button variant="ghost" size="sm" asChild className="text-xs">
+                <Button variant="darkOutline" size="sm" asChild>
                   <Link href="/login" className="flex items-center gap-1.5">
-                    <User className="size-4" />
-                    <span className="hidden sm:inline">Sign In</span>
+                    <User className="size-3.5" />
+                    <span>Sign In</span>
                   </Link>
                 </Button>
               )}
             </div>
 
-            {/* Cart Trigger Button */}
+            {/* Shopping Cart Trigger */}
             <Button
               variant="outline"
-              size="icon"
+              size="iconSm"
               onClick={openCart}
-              className="relative size-9"
-              aria-label="View shopping cart"
+              className="relative rounded-full border-[var(--border)] text-[rgba(0,0,0,0.87)] hover:text-[var(--brand-accent)] hover:border-[var(--brand-accent)]"
+              aria-label="View shopping bag"
             >
-              <ShoppingBag className="size-4 text-foreground" />
+              <ShoppingBag className="size-4" />
               {isMounted && itemCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full bg-[var(--saffron)] text-[10px] font-bold text-white tabular-nums shadow-sm animate-in zoom-in-75">
+                <span className="absolute -top-1 -right-1 flex size-5 items-center justify-center rounded-full bg-[var(--brand-accent)] text-[10px] font-bold text-white tabular-nums shadow-xs animate-in zoom-in-75">
                   {itemCount}
                 </span>
               )}
@@ -264,7 +266,7 @@ export function Header({ categories = [] }: HeaderProps) {
           </div>
         </div>
 
-        {/* Mobile Search Input (Visible only on small viewports) */}
+        {/* Mobile Search Input */}
         <div className="pb-3 pt-1 sm:hidden">
           <SearchAutocomplete />
         </div>

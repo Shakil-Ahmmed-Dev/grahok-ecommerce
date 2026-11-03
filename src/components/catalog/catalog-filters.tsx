@@ -117,15 +117,15 @@ export function CatalogFilters({
 
   const FilterContent = (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground flex items-center gap-2">
+      <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--brand-green)] flex items-center gap-2">
           <Filter className="size-4" />
-          <span>Filters</span>
+          <span>Catalog Filters</span>
         </h3>
         {hasActiveFilters && (
           <button
             onClick={handleReset}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+            className="text-xs font-semibold text-[var(--brand-accent)] hover:underline flex items-center gap-1 transition-colors cursor-pointer"
           >
             <RotateCcw className="size-3" />
             <span>Reset</span>
@@ -135,8 +135,10 @@ export function CatalogFilters({
 
       {/* Category Facet */}
       <div className="flex flex-col gap-2">
-        <h4 className="text-xs font-semibold text-foreground">Categories</h4>
-        <div className="flex flex-col gap-1 max-h-56 overflow-y-auto pr-1">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-[rgba(0,0,0,0.87)]">
+          Departments
+        </h4>
+        <div className="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">
           {categories.map((cat) => {
             const isSelected = selectedCategory === cat.slug;
             const facetCount = facets?.categories?.find((f) => f.slug === cat.slug)?.count;
@@ -145,28 +147,28 @@ export function CatalogFilters({
                 <button
                   type="button"
                   onClick={() => handleCategorySelect(cat.slug)}
-                  className={`flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs font-medium text-left transition-colors ${
+                  className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold text-left transition-all ${
                     isSelected
-                      ? "bg-primary text-primary-foreground"
-                      : "hover:bg-muted text-foreground"
+                      ? "bg-[var(--brand-accent)] text-white shadow-2xs"
+                      : "hover:bg-[var(--brand-ceramic)] text-[rgba(0,0,0,0.87)]"
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <div
-                      className={`size-3.5 rounded border flex items-center justify-center ${
+                      className={`size-3.5 rounded-full border flex items-center justify-center transition-transform ${
                         isSelected
-                          ? "border-primary-foreground bg-primary-foreground text-primary"
-                          : "border-muted-foreground/40"
+                          ? "border-white bg-white text-[var(--brand-accent)] scale-110"
+                          : "border-[var(--border)]"
                       }`}
                     >
-                      {isSelected && <Check className="size-2.5" />}
+                      {isSelected && <Check className="size-2.5 stroke-[3]" />}
                     </div>
                     <span>{cat.name}</span>
                   </div>
                   {facetCount !== undefined && (
                     <span
                       className={`text-[11px] tabular-nums ${
-                        isSelected ? "text-primary-foreground/80" : "text-muted-foreground"
+                        isSelected ? "text-white/90" : "text-[rgba(0,0,0,0.58)]"
                       }`}
                     >
                       {facetCount}
@@ -181,26 +183,24 @@ export function CatalogFilters({
                       key={child.id}
                       type="button"
                       onClick={() => handleCategorySelect(child.slug)}
-                      className={`flex items-center justify-between rounded-md pl-6 pr-2.5 py-1 text-xs text-left transition-colors ${
+                      className={`flex items-center justify-between rounded-lg pl-7 pr-3 py-1.5 text-xs text-left transition-all ${
                         isChildSelected
-                          ? "bg-primary/90 text-primary-foreground font-semibold"
-                          : "hover:bg-muted/70 text-muted-foreground hover:text-foreground"
+                          ? "bg-[var(--brand-mint)]/50 text-[var(--brand-green)] font-bold"
+                          : "hover:bg-[var(--brand-ceramic)]/60 text-[rgba(0,0,0,0.65)] hover:text-[rgba(0,0,0,0.87)]"
                       }`}
                     >
                       <div className="flex items-center gap-2 truncate">
                         <div
-                          className={`size-3 rounded border flex items-center justify-center shrink-0 ${
+                          className={`size-2.5 rounded-full border flex items-center justify-center shrink-0 ${
                             isChildSelected
-                              ? "border-primary-foreground bg-primary-foreground text-primary"
-                              : "border-muted-foreground/30"
+                              ? "border-[var(--brand-green)] bg-[var(--brand-green)]"
+                              : "border-[var(--border)]"
                           }`}
-                        >
-                          {isChildSelected && <Check className="size-2" />}
-                        </div>
+                        />
                         <span className="truncate">{child.name}</span>
                       </div>
                       {childFacetCount !== undefined && (
-                        <span className="text-[10px] tabular-nums text-muted-foreground ml-2 shrink-0">
+                        <span className="text-[10px] tabular-nums text-[rgba(0,0,0,0.58)] ml-2 shrink-0">
                           {childFacetCount}
                         </span>
                       )}
@@ -214,43 +214,47 @@ export function CatalogFilters({
       </div>
 
       {/* Availability Toggle */}
-      <div className="flex flex-col gap-2 pt-4 border-t border-border">
-        <h4 className="text-xs font-semibold text-foreground">Availability</h4>
-        <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer select-none">
+      <div className="flex flex-col gap-2.5 pt-4 border-t border-[var(--border)]">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-[rgba(0,0,0,0.87)]">
+          Availability
+        </h4>
+        <label className="flex items-center gap-2.5 text-xs font-medium text-[rgba(0,0,0,0.87)] cursor-pointer select-none">
           <input
             type="checkbox"
             checked={inStockOnly}
             onChange={handleInStockToggle}
-            className="size-4 rounded border-border text-primary focus:ring-primary"
+            className="size-4 rounded accent-[var(--brand-accent)] cursor-pointer"
           />
           <span>In Stock Only</span>
         </label>
       </div>
 
       {/* Price Range */}
-      <div className="flex flex-col gap-3 pt-4 border-t border-border">
-        <h4 className="text-xs font-semibold text-foreground">Price Range (BDT)</h4>
-        <form onSubmit={handlePriceApply} className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3 pt-4 border-t border-[var(--border)]">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-[rgba(0,0,0,0.87)]">
+          Price Range (BDT)
+        </h4>
+        <form onSubmit={handlePriceApply} className="flex flex-col gap-2.5">
           <div className="flex items-center gap-2">
             <Input
               type="number"
               placeholder="Min"
               value={minPrice}
               onChange={(e) => setMinPrice(e.target.value)}
-              className="h-8 text-xs tabular-nums"
+              className="h-9 text-xs tabular-nums bg-white"
               min={0}
             />
-            <span className="text-muted-foreground text-xs">&ndash;</span>
+            <span className="text-[rgba(0,0,0,0.58)] text-xs">&ndash;</span>
             <Input
               type="number"
               placeholder="Max"
               value={maxPrice}
               onChange={(e) => setMaxPrice(e.target.value)}
-              className="h-8 text-xs tabular-nums"
+              className="h-9 text-xs tabular-nums bg-white"
               min={0}
             />
           </div>
-          <Button type="submit" variant="secondary" size="sm" className="h-7 text-xs">
+          <Button type="submit" variant="default" size="sm" className="h-8 text-xs font-semibold">
             Apply Price
           </Button>
         </form>
@@ -261,7 +265,7 @@ export function CatalogFilters({
   return (
     <>
       {/* Desktop Sticky Sidebar */}
-      <aside className="hidden lg:block w-64 shrink-0 pr-6 border-r border-border">
+      <aside className="hidden lg:block w-64 shrink-0 pr-6 border-r border-[var(--border)]">
         {FilterContent}
       </aside>
 
@@ -269,17 +273,19 @@ export function CatalogFilters({
       <div className="lg:hidden">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
-            <Button variant="outline" size="sm" className="flex items-center gap-1.5 h-9 text-xs">
+            <Button variant="outline" size="sm" className="flex items-center gap-1.5 h-9 text-xs font-semibold">
               <Filter className="size-3.5" />
               <span>Filters</span>
               {hasActiveFilters && (
-                <span className="size-2 rounded-full bg-[var(--saffron)]" />
+                <span className="size-2 rounded-full bg-[var(--brand-accent)]" />
               )}
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-[300px] p-6">
-            <SheetHeader className="text-left border-b pb-4">
-              <SheetTitle className="text-base font-semibold">Filter Products</SheetTitle>
+          <SheetContent side="left" className="w-[310px] p-6 bg-[var(--brand-cream)]">
+            <SheetHeader className="text-left border-b border-[var(--border)] pb-4">
+              <SheetTitle className="text-base font-bold text-[var(--brand-green)]">
+                Filter Catalog
+              </SheetTitle>
             </SheetHeader>
             <div className="mt-6">{FilterContent}</div>
           </SheetContent>
