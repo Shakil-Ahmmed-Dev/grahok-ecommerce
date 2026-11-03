@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image, { type ImageProps } from "next/image";
-import { Sparkles, ShoppingBag } from "lucide-react";
+import { ShoppingBag } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ProductImageProps extends Omit<ImageProps, "src"> {

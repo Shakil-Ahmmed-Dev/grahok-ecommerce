@@ -8,15 +8,16 @@ import { Empty } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
 import productsActions from "@/features/products/actions";
 import categoriesActions from "@/features/categories/actions";
+import type { TCategoryTreeNode } from "@/features/categories/types";
 
 interface ProductsPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 function findCategoryBySlug(
-  tree: Array<{ id: string; name: string; slug: string; children?: any[] }>,
+  tree: TCategoryTreeNode[],
   slug: string
-): { id: string; name: string; slug: string } | null {
+): TCategoryTreeNode | null {
   for (const cat of tree) {
     if (cat.slug === slug) return cat;
     if (cat.children?.length) {

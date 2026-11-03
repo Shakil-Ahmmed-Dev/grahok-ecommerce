@@ -15,7 +15,7 @@ interface VariantSelectorProps {
 
 export function VariantSelector({ product }: VariantSelectorProps) {
   const router = useRouter();
-  const { addItem } = useCart();
+  const { addItem, openCart } = useCart();
 
   // Find initial default variant
   const initialVariant =
@@ -79,33 +79,33 @@ export function VariantSelector({ product }: VariantSelectorProps) {
     });
   };
 
+  const getCartItemData = () => ({
+    variantId: activeVariant?.id || product.id,
+    productId: product.id,
+    slug: product.slug,
+    title: product.name,
+    variantTitle: activeVariant?.title !== product.name ? activeVariant?.title : undefined,
+    price: currentPrice,
+    imageUrl: activeVariant?.imageUrl || product.featuredImageUrl,
+    sku: currentSku,
+    maxStock: currentStock,
+    allowBackorder,
+  });
+
   const handleAddToCart = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     if (isOutOfStock) return;
 
     setIsAdding(true);
-    addItem(
-      {
-        variantId: activeVariant?.id || product.id,
-        productId: product.id,
-        slug: product.slug,
-        title: product.name,
-        variantTitle: activeVariant?.title !== product.name ? activeVariant?.title : undefined,
-        price: currentPrice,
-        imageUrl: activeVariant?.imageUrl || product.featuredImageUrl,
-        sku: currentSku,
-        maxStock: currentStock,
-        allowBackorder,
-      },
-      quantity
-    );
+    addItem(getCartItemData(), quantity);
+    openCart();
 
     setTimeout(() => setIsAdding(false), 500);
   };
 
   const handleBuyNow = () => {
     if (isOutOfStock) return;
-    handleAddToCart();
+    addItem(getCartItemData(), quantity);
     router.push("/checkout");
   };
 
