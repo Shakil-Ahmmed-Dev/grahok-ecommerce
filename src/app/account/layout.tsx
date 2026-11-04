@@ -15,6 +15,8 @@ const ACCOUNT_NAV = [
   { href: "/account/privacy", label: "Privacy & Data", icon: Shield },
 ];
 
+const emptySubscribe = () => () => {};
+
 export default function AccountLayout({
   children,
 }: {
@@ -23,8 +25,13 @@ export default function AccountLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { data: session, isPending } = useSession();
+  const mounted = React.useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
 
-  if (isPending) {
+  if (!mounted || isPending) {
     return (
       <div className="container mx-auto px-4 py-20 flex items-center justify-center min-h-[400px]">
         <Spinner className="size-8 text-[var(--brand-accent)]" />
@@ -35,7 +42,7 @@ export default function AccountLayout({
   if (!session?.user) {
     return (
       <div className="container mx-auto px-4 py-20 text-center max-w-md">
-        <div className="size-14 rounded-full bg-[var(--brand-mint)]/40 flex items-center justify-center mx-auto mb-4 text-[var(--brand-green)] shadow-2xs">
+        <div className="size-14 rounded-full bg-[var(--brand-mint)]/40 flex items-center justify-center mx-auto mb-4 text-[var(--brand-green)] shadow-starbucks-card">
           <User className="size-6" />
         </div>
         <h1 className="text-2xl font-extrabold tracking-tight text-[var(--brand-green)]">
