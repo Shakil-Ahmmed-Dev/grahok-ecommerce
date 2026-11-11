@@ -193,13 +193,12 @@ export async function estimateCheckout(
 }
 
 /**
- * Executes full checkout processing:
+ * Executes full checkout processing with database transactional atomicity:
  * 1. Resolves registered vs guest customer
  * 2. Resolves shipping and billing addresses
  * 3. Resolves and validates variant snapshots & inventory availability
- * 4. Atomically reserves stock (with rollback if any item fails)
- * 5. Creates immutable order & order items
- * 6. Updates customer statistics and records audit log
+ * 4. Atomically reserves stock, creates order & order items, and updates customer statistics within a DB transaction
+ * 5. Returns authoritative OrderDTO
  */
 export async function processCheckout(
     input: TCheckoutProcessInput,
@@ -429,35 +428,7 @@ export async function processCheckout(
         guestAccessTokenHash = generated.hash;
     }
 
-    // 8. Reserve Inventory (with automatic compensation on conflict/failure)
-    const reservedBatch: Array<{ variantId: string; quantity: number }> = [];
-    const reservationResults = new Map<string, { isBackordered: boolean }>();
-
-    try {
-        for (const item of itemsToReserve) {
-            const res = await reserveVariantInventory({
-                variantId: item.variantId,
-                quantity: item.quantity,
-            });
-            reservedBatch.push({ variantId: item.variantId, quantity: item.quantity });
-            reservationResults.set(item.variantId, { isBackordered: res.isBackordered });
-        }
-    } catch (reserveError) {
-        // Rollback reserved items
-        for (const reserved of reservedBatch) {
-            try {
-                await releaseVariantInventory({
-                    variantId: reserved.variantId,
-                    quantity: reserved.quantity,
-                });
-            } catch {
-                // Best-effort rollback
-            }
-        }
-        throw reserveError;
-    }
-
-    // 9. Create Order & Order Items
+    // 8. Atomically Reserve Inventory, Create Order, Create Line Items & Update Customer Stats
     const orderNumber = generateOrderNumber();
     const logisticsSnapshot: TConsignmentLogisticsSnapshot = {
         totalActualWeight: pricing.logistics.totalActualWeight,
@@ -468,9 +439,20 @@ export async function processCheckout(
         hasPhysicalGoods: pricing.logistics.hasPhysicalGoods,
     };
 
-    let createdOrder: typeof ordersTable.$inferSelect;
-    try {
-        const [order] = await db
+    const { createdOrder, createdItems } = await db.transaction(async (tx) => {
+        // A. Reserve inventory for each item using transaction executor
+        const reservationResults = new Map<string, { isBackordered: boolean }>();
+        for (const item of itemsToReserve) {
+            const res = await reserveVariantInventory({
+                variantId: item.variantId,
+                quantity: item.quantity,
+                executor: tx,
+            });
+            reservationResults.set(item.variantId, { isBackordered: res.isBackordered });
+        }
+
+        // B. Insert order record
+        const [order] = await tx
             .insert(ordersTable)
             .values({
                 orderNumber,
@@ -500,67 +482,34 @@ export async function processCheckout(
         if (!order) {
             throw new BadRequestError("Failed to record checkout order");
         }
-        createdOrder = order;
-    } catch (orderInsertError) {
-        // Release reserved inventory if order insertion failed
-        for (const reserved of reservedBatch) {
-            try {
-                await releaseVariantInventory({
-                    variantId: reserved.variantId,
-                    quantity: reserved.quantity,
-                });
-            } catch {
-                // Best-effort rollback
-            }
-        }
-        throw orderInsertError;
-    }
 
-    // Insert order items
-    const lineItemValues = itemsToReserve.map((item) => {
-        const isBackordered = reservationResults.get(item.variantId)?.isBackordered ?? false;
-        const lineTotalPrice = roundToDecimals(item.snapshot.currentPrice * item.quantity, 2);
+        // C. Insert order line items
+        const lineItemValues = itemsToReserve.map((item) => {
+            const isBackordered = reservationResults.get(item.variantId)?.isBackordered ?? false;
+            const lineTotalPrice = roundToDecimals(item.snapshot.currentPrice * item.quantity, 2);
 
-        return {
-            orderId: createdOrder.id,
-            productId: item.snapshot.productId,
-            variantId: item.snapshot.variantId,
-            title: item.snapshot.title,
-            variantTitle: item.snapshot.variantTitle,
-            sku: item.snapshot.sku,
-            slug: item.snapshot.slug,
-            imageUrl: item.snapshot.imageUrl ?? null,
-            unitPrice: item.snapshot.currentPrice.toFixed(2),
-            quantity: item.quantity,
-            totalPrice: lineTotalPrice.toFixed(2),
-            weight: item.snapshot.weight != null ? item.snapshot.weight : null,
-            isBackordered,
-            snapshot: item.snapshot,
-        };
-    });
+            return {
+                orderId: order.id,
+                productId: item.snapshot.productId,
+                variantId: item.snapshot.variantId,
+                title: item.snapshot.title,
+                variantTitle: item.snapshot.variantTitle,
+                sku: item.snapshot.sku,
+                slug: item.snapshot.slug,
+                imageUrl: item.snapshot.imageUrl ?? null,
+                unitPrice: item.snapshot.currentPrice.toFixed(2),
+                quantity: item.quantity,
+                totalPrice: lineTotalPrice.toFixed(2),
+                weight: item.snapshot.weight != null ? item.snapshot.weight : null,
+                isBackordered,
+                snapshot: item.snapshot,
+            };
+        });
 
-    let createdItems: Array<typeof orderItemsTable.$inferSelect>;
-    try {
-        createdItems = await db.insert(orderItemsTable).values(lineItemValues).returning();
-    } catch (itemsInsertError) {
-        // If order items fail, clean up order and release stock
-        try {
-            await db.delete(ordersTable).where(eq(ordersTable.id, createdOrder.id));
-            for (const reserved of reservedBatch) {
-                await releaseVariantInventory({
-                    variantId: reserved.variantId,
-                    quantity: reserved.quantity,
-                });
-            }
-        } catch {
-            // Best effort cleanup
-        }
-        throw itemsInsertError;
-    }
+        const items = await tx.insert(orderItemsTable).values(lineItemValues).returning();
 
-    // 9. Update Customer Statistics & Record Security Audit Log
-    try {
-        await db
+        // D. Update Customer Statistics atomically within the same transaction
+        await tx
             .update(customersTable)
             .set({
                 totalOrders: sql`${customersTable.totalOrders} + 1`,
@@ -569,6 +518,11 @@ export async function processCheckout(
             })
             .where(eq(customersTable.id, customerId));
 
+        return { createdOrder: order, createdItems: items };
+    });
+
+    // 9. Record Security Audit Log (non-blocking post-checkout audit)
+    try {
         await recordCustomerAuditLog({
             customerId,
             actorId: context?.authUserId ?? customerId,
