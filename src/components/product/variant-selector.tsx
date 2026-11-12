@@ -38,26 +38,47 @@ export function VariantSelector({ product }: VariantSelectorProps) {
   const [quantity, setQuantity] = React.useState(1);
   const [isAdding, setIsAdding] = React.useState(false);
 
-  // Find active variant by matching all selected options
+  const hasOptions = (product.options?.length ?? 0) > 0;
+
+  // Find exact active variant matching all selected options — NEVER silently swap to an unrelated variant
   const activeVariant: TProductVariantPublic | undefined = React.useMemo(() => {
     if (!product.variants || product.variants.length === 0) return undefined;
+    if (!hasOptions) {
+      return product.variants.find((v) => v.isDefault) || product.variants[0];
+    }
     return product.variants.find((v) => {
       if (!v.optionValues || typeof v.optionValues !== "object") return false;
       const vOpts = v.optionValues as Record<string, string>;
       return Object.entries(selectedOptions).every(
         ([optName, optVal]) => vOpts[optName] === optVal
       );
-    }) || product.variants.find((v) => v.isDefault) || product.variants[0];
-  }, [product.variants, selectedOptions]);
+    });
+  }, [product.variants, selectedOptions, hasOptions]);
+
+  const isCombinationAvailable = !hasOptions || Boolean(activeVariant);
+
+  // Check if a specific option value combination exists with other currently selected options
+  const isOptionCombinationValid = React.useCallback(
+    (optionName: string, value: string) => {
+      if (!product.variants || product.variants.length === 0) return true;
+      const testOptions = { ...selectedOptions, [optionName]: value };
+      return product.variants.some((v) => {
+        if (v.isActive === false) return false;
+        const vOpts = (v.optionValues ?? {}) as Record<string, string>;
+        return Object.entries(testOptions).every(([k, vVal]) => vOpts[k] === vVal);
+      });
+    },
+    [product.variants, selectedOptions]
+  );
 
   // Pricing & inventory calculations
   const currentPrice = activeVariant?.sellPrice ?? product.sellPrice;
-  const currentStock = activeVariant?.stock ?? product.stock;
+  const currentStock = activeVariant ? (activeVariant.stock ?? 0) : (product.stock ?? 0);
   const allowBackorder = activeVariant?.allowBackorder ?? product.allowBackorder ?? false;
   const currentSku = activeVariant?.sku || product.slug;
 
-  const isOutOfStock = currentStock !== null && currentStock <= 0 && !allowBackorder;
-  const isBackorder = currentStock !== null && currentStock <= 0 && allowBackorder;
+  const isOutOfStock = !isCombinationAvailable || (currentStock !== null && currentStock <= 0 && !allowBackorder);
+  const isBackorder = isCombinationAvailable && currentStock !== null && currentStock <= 0 && allowBackorder;
 
   // Handle option click
   const handleOptionChange = (optionName: string, value: string) => {
@@ -73,39 +94,47 @@ export function VariantSelector({ product }: VariantSelectorProps) {
       const next = prev + delta;
       if (next < 1) return 1;
       if (!allowBackorder && currentStock !== null && next > currentStock) {
-        return currentStock;
+        return Math.max(1, currentStock);
       }
       return next;
     });
   };
 
-  const getCartItemData = () => ({
-    variantId: activeVariant?.id || product.id,
-    productId: product.id,
-    slug: product.slug,
-    title: product.name,
-    variantTitle: activeVariant?.title !== product.name ? activeVariant?.title : undefined,
-    price: currentPrice,
-    imageUrl: activeVariant?.imageUrl || product.featuredImageUrl,
-    sku: currentSku,
-    maxStock: currentStock,
-    allowBackorder,
-  });
+  const getCartItemData = () => {
+    if (!activeVariant) return null;
+    return {
+      variantId: activeVariant.id,
+      productId: product.id,
+      slug: product.slug,
+      title: product.name,
+      variantTitle: activeVariant.title !== product.name ? activeVariant.title : undefined,
+      price: currentPrice,
+      imageUrl: activeVariant.imageUrl || product.featuredImageUrl,
+      sku: currentSku,
+      maxStock: currentStock,
+      allowBackorder,
+    };
+  };
 
   const handleAddToCart = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
-    if (isOutOfStock) return;
+    if (!isCombinationAvailable || isOutOfStock) return;
+
+    const itemData = getCartItemData();
+    if (!itemData) return;
 
     setIsAdding(true);
-    addItem(getCartItemData(), quantity);
+    addItem(itemData, quantity);
     openCart();
 
     setTimeout(() => setIsAdding(false), 500);
   };
 
   const handleBuyNow = () => {
-    if (isOutOfStock) return;
-    addItem(getCartItemData(), quantity);
+    if (!isCombinationAvailable || isOutOfStock) return;
+    const itemData = getCartItemData();
+    if (!itemData) return;
+    addItem(itemData, quantity);
     router.push("/checkout");
   };
 
@@ -120,7 +149,11 @@ export function VariantSelector({ product }: VariantSelectorProps) {
         </div>
 
         <div>
-          {isOutOfStock ? (
+          {!isCombinationAvailable ? (
+            <Badge variant="outOfStock" className="px-3 py-1 text-xs font-semibold">
+              Selected Combination Unavailable
+            </Badge>
+          ) : isOutOfStock ? (
             <Badge variant="outOfStock" className="px-3 py-1 text-xs font-semibold">
               Out of Stock
             </Badge>
@@ -136,7 +169,13 @@ export function VariantSelector({ product }: VariantSelectorProps) {
         </div>
       </div>
 
-      {isBackorder && (
+      {!isCombinationAvailable && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-800">
+          <strong className="font-bold">Combination Unavailable:</strong> The selected combination of options is not currently produced or stocked. Please select an alternate size, color, or option.
+        </div>
+      )}
+
+      {isCombinationAvailable && isBackorder && (
         <div className="rounded-xl border border-[var(--brand-gold-light)] bg-[var(--brand-gold-lightest)] p-3.5 text-xs text-[var(--foreground)]">
           <strong className="text-[var(--brand-gold)] font-bold">Backorder Note:</strong> This item is currently in handcrafted small batches and will dispatch as soon as the next run finishes.
         </div>
@@ -159,6 +198,7 @@ export function VariantSelector({ product }: VariantSelectorProps) {
               <div className="flex flex-wrap gap-2">
                 {opt.values.map((val) => {
                   const isSelected = selectedOptions[opt.name] === val.value;
+                  const isValid = isOptionCombinationValid(opt.name, val.value);
                   return (
                     <button
                       key={val.id}
@@ -167,6 +207,8 @@ export function VariantSelector({ product }: VariantSelectorProps) {
                       className={`min-w-14 h-9 px-4 rounded-full text-xs font-semibold border transition-all duration-150 select-none cursor-pointer active:scale-95 ${
                         isSelected
                           ? "border-[var(--brand-accent)] bg-[var(--brand-accent)] text-white shadow-2xs"
+                          : !isValid
+                          ? "border-dashed border-[var(--border)] bg-[var(--brand-ceramic)]/50 text-[rgba(0,0,0,0.4)] hover:border-black/30"
                           : "border-[var(--border)] bg-white text-[rgba(0,0,0,0.87)] hover:border-[var(--brand-accent)]"
                       }`}
                     >
@@ -217,18 +259,24 @@ export function VariantSelector({ product }: VariantSelectorProps) {
           <Button
             type="button"
             onClick={handleAddToCart}
-            disabled={isOutOfStock || isAdding}
+            disabled={!isCombinationAvailable || isOutOfStock || isAdding}
             size="lg"
             className="h-12 text-sm font-semibold shadow-xs"
           >
             <ShoppingBag className="size-4 mr-2" />
-            <span>{isOutOfStock ? "Out of Stock" : "Add to Bag"}</span>
+            <span>
+              {!isCombinationAvailable
+                ? "Unavailable Combination"
+                : isOutOfStock
+                ? "Out of Stock"
+                : "Add to Bag"}
+            </span>
           </Button>
 
           <Button
             type="button"
             onClick={handleBuyNow}
-            disabled={isOutOfStock}
+            disabled={!isCombinationAvailable || isOutOfStock}
             variant="dark"
             size="lg"
             className="h-12 text-sm font-semibold shadow-xs"

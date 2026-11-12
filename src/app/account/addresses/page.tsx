@@ -79,19 +79,23 @@ export default function AccountAddressesPage() {
     e.preventDefault();
     setFormError(null);
 
-    // E.164 phone formatting
-    let cleanPhone = phone.trim().replace(/[\s\-\(\)]/g, "");
-    if (!cleanPhone.startsWith("+")) {
-      cleanPhone = `+880${cleanPhone.replace(/^0+/, "")}`;
+    // E.164 phone formatting (strict Bangladeshi mobile normalization)
+    let clean = phone.trim().replace(/[\s\-\(\)]/g, "");
+    if (clean.startsWith("+880")) {
+      clean = clean.slice(4);
+    } else if (clean.startsWith("880")) {
+      clean = clean.slice(3);
     }
+    clean = clean.replace(/^0+/, "");
+    const cleanPhone = clean ? `+880${clean}` : "";
 
-    if (!recipientName.trim() || !addressLine1.trim() || !city.trim() || !postalCode.trim()) {
+    if (!recipientName.trim() || !addressLine1.trim() || !city.trim() || !postalCode.trim() || !phone.trim()) {
       setFormError("Please fill in all required fields.");
       return;
     }
 
-    if (!/^\+[1-9]\d{6,14}$/.test(cleanPhone)) {
-      setFormError("Please provide a valid phone number (e.g. 1712345678 or +8801712345678).");
+    if (!/^\+8801[3-9]\d{8}$/.test(cleanPhone)) {
+      setFormError("Please provide a valid 11-digit Bangladeshi mobile number (e.g. 01712345678).");
       return;
     }
 
@@ -294,7 +298,7 @@ export default function AccountAddressesPage() {
                 <Input
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="1712345678 or +8801712345678"
+                  placeholder="01712345678 or +8801712345678"
                   required
                 />
               </Field>

@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -54,16 +55,25 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [cancelError, setCancelError] = React.useState<string | null>(null);
 
+  // Synchronize and persist guest access token across tabs and reloads
   const token = React.useMemo(() => {
-    if (initialToken) return initialToken;
     if (typeof window !== "undefined") {
       try {
-        return window.sessionStorage.getItem(`guest_token_${orderId}`) || undefined;
+        if (initialToken) {
+          window.sessionStorage.setItem(`guest_token_${orderId}`, initialToken);
+          window.localStorage.setItem(`guest_token_${orderId}`, initialToken);
+          return initialToken;
+        }
+        return (
+          window.sessionStorage.getItem(`guest_token_${orderId}`) ||
+          window.localStorage.getItem(`guest_token_${orderId}`) ||
+          undefined
+        );
       } catch {
-        return undefined;
+        return initialToken || undefined;
       }
     }
-    return undefined;
+    return initialToken || undefined;
   }, [initialToken, orderId]);
 
   React.useEffect(() => {
@@ -72,7 +82,11 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
     async function load() {
       try {
         const url = `/api/v1/checkout/${orderId}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-        const res = await fetch(url);
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers["x-order-token"] = token;
+        }
+        const res = await fetch(url, { headers });
         if (!res.ok) {
           throw new Error("Unable to locate order details. Check your order reference or sign in.");
         }
@@ -110,9 +124,13 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
     setCancelError(null);
     try {
       const url = `/api/v1/checkout/${orderId}/cancel${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) {
+        headers["x-order-token"] = token;
+      }
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ reason: cancelReason || "Customer requested cancellation" }),
       });
       const data = await res.json();
@@ -154,8 +172,27 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
     );
   }
 
-  const currentStepIdx = TIMELINE_STEPS.findIndex((s) => s.key === order.status);
+  const getStepIndex = (status: string) => {
+    switch (status) {
+      case "pending":
+        return 0;
+      case "confirmed":
+        return 1;
+      case "processing":
+        return 2;
+      case "shipped":
+      case "in_transit":
+        return 3;
+      case "delivered":
+        return 4;
+      default:
+        return -1;
+    }
+  };
+
+  const currentStepIdx = getStepIndex(order.status);
   const isCancelled = order.status === "cancelled";
+  const isRefunded = order.status === "refunded";
   const isCancellable = order.status === "pending" || order.status === "confirmed";
 
   return (
@@ -163,18 +200,46 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
       {/* Top Banner: Success Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-[var(--border)]">
         <div className="flex items-center gap-4">
-          <div className="size-14 rounded-full bg-[var(--brand-mint)]/40 text-[var(--brand-accent)] flex items-center justify-center shrink-0 shadow-2xs">
-            <CheckCircle2 className="size-7" />
-          </div>
+          {isCancelled ? (
+            <div className="size-14 rounded-full bg-red-50 text-[var(--destructive)] flex items-center justify-center shrink-0 shadow-2xs">
+              <XCircle className="size-7" />
+            </div>
+          ) : isRefunded ? (
+            <div className="size-14 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 shadow-2xs">
+              <RotateCcw className="size-7" />
+            </div>
+          ) : (
+            <div className="size-14 rounded-full bg-[var(--brand-mint)]/40 text-[var(--brand-accent)] flex items-center justify-center shrink-0 shadow-2xs">
+              <CheckCircle2 className="size-7" />
+            </div>
+          )}
           <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--brand-accent)]">
-              Order Confirmed & Placed
+            <span
+              className={`text-xs font-bold uppercase tracking-wider ${
+                isCancelled
+                  ? "text-[var(--destructive)]"
+                  : isRefunded
+                  ? "text-amber-700"
+                  : "text-[var(--brand-accent)]"
+              }`}
+            >
+              {isCancelled
+                ? "Order Cancelled"
+                : isRefunded
+                ? "Order Refunded"
+                : "Order Confirmed & Placed"}
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[var(--brand-green)] mt-0.5">
-              Thank You for Your Order
+              {isCancelled || isRefunded
+                ? `Order #${order.orderNumber}`
+                : "Thank You for Your Order"}
             </h1>
             <p className="text-xs text-[rgba(0,0,0,0.58)] mt-1">
-              Your items are reserved and will be delivered straight to your doorstep.
+              {isCancelled
+                ? "This order was cancelled. Reserved items have been released to inventory."
+                : isRefunded
+                ? "This order has been returned or refunded. Payment has been settled accordingly."
+                : "Your items are reserved and will be delivered straight to your doorstep."}
             </p>
           </div>
         </div>
@@ -206,9 +271,13 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
             <Badge variant="outOfStock" className="px-3 py-1 text-xs font-semibold">
               Cancelled
             </Badge>
+          ) : isRefunded ? (
+            <Badge variant="secondary" className="px-3 py-1 text-xs font-semibold bg-amber-100 text-amber-900 border-amber-200">
+              Refunded
+            </Badge>
           ) : (
             <Badge variant="inStock" className="px-3 py-1 text-xs font-semibold capitalize">
-              {order.status}
+              {order.status.replace("_", " ")}
             </Badge>
           )}
         </div>
@@ -221,6 +290,16 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
               <span>
                 This order was cancelled. Any reserved stock has been automatically returned to
                 inventory.
+              </span>
+            </div>
+          </div>
+        ) : isRefunded ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900 flex items-start gap-3">
+            <RotateCcw className="size-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <strong className="font-bold block mb-0.5">Order Refunded</strong>
+              <span>
+                This order has been returned or refunded. The payment transaction has been settled accordingly.
               </span>
             </div>
           </div>
@@ -243,6 +322,7 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
               const StepIcon = step.icon;
               const isPastOrCurrent = currentStepIdx >= idx;
               const isCurrent = currentStepIdx === idx;
+              const stepLabel = isCurrent && order.status === "in_transit" ? "In Transit" : step.label;
 
               return (
                 <div key={step.key} className="relative z-10 flex flex-col items-center gap-2">
@@ -262,7 +342,7 @@ export function OrderReceipt({ orderId, initialToken }: OrderReceiptProps) {
                       isPastOrCurrent ? "text-[rgba(0,0,0,0.87)]" : "text-[rgba(0,0,0,0.4)]"
                     }`}
                   >
-                    {step.label}
+                    {stepLabel}
                   </span>
                 </div>
               );

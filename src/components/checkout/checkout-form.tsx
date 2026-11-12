@@ -81,12 +81,16 @@ export function CheckoutForm() {
     return () => clearTimeout(timer);
   }, [session, email, recipientName, firstName, lastName]);
 
-  // Combined E.164 phone string
+  // Combined E.164 phone string (strict Bangladeshi mobile normalization)
   const fullPhone = React.useMemo(() => {
-    const cleanNum = phoneNumber.replace(/[\s\-\(\)]/g, "");
-    if (cleanNum.startsWith("+")) return cleanNum;
-    const cleanDigits = cleanNum.replace(/^0+/, "");
-    return `${phonePrefix}${cleanDigits}`;
+    let clean = phoneNumber.trim().replace(/[\s\-\(\)]/g, "");
+    if (clean.startsWith("+880")) {
+      clean = clean.slice(4);
+    } else if (clean.startsWith("880")) {
+      clean = clean.slice(3);
+    }
+    clean = clean.replace(/^0+/, "");
+    return clean ? `${phonePrefix}${clean}` : "";
   }, [phonePrefix, phoneNumber]);
 
   // Live Valuation Estimate API call
@@ -146,8 +150,8 @@ export function CheckoutForm() {
 
     if (!phoneNumber.trim()) {
       errs.phoneNumber = "Phone number is required";
-    } else if (!/^\+[1-9]\d{6,14}$/.test(fullPhone)) {
-      errs.phoneNumber = "Please enter a valid phone number (e.g. 1712345678)";
+    } else if (!/^\+8801[3-9]\d{8}$/.test(fullPhone)) {
+      errs.phoneNumber = "Please enter a valid 11-digit Bangladeshi mobile number (e.g. 01712345678)";
     }
 
     if (!addressLine1.trim()) {
@@ -234,6 +238,16 @@ export function CheckoutForm() {
 
       // Clear local cart
       clearCart();
+
+      // Persist guest access token to local & session storage for seamless tracking across tabs
+      if (typeof window !== "undefined" && createdOrder.guestAccessToken) {
+        try {
+          window.sessionStorage.setItem(`guest_token_${createdOrder.id}`, createdOrder.guestAccessToken);
+          window.localStorage.setItem(`guest_token_${createdOrder.id}`, createdOrder.guestAccessToken);
+        } catch {
+          // Ignore storage quota / restriction errors
+        }
+      }
 
       // Navigate to order-confirmed
       const tokenParam = createdOrder.guestAccessToken

@@ -24,14 +24,15 @@ export function ProductCard({ product }: ProductCardProps) {
 
   const hasMultipleVariants = (product.variants?.length ?? 0) > 1;
 
-  // Determine stock availability across standalone and variant/shared-pool models
+  // Determine stock availability across standalone and variant/shared-pool models.
+  // Prioritize defaultVariant stock since Quick Add purchases defaultVariant.
   const effectiveStock =
     product.inventoryType === "shared_pool"
       ? (product.poolStock ?? 0)
-      : (product.stock ?? defaultVariant?.stock ?? 0);
+      : (defaultVariant?.stock ?? product.stock ?? 0);
 
   const effectiveAllowBackorder =
-    product.allowBackorder ?? defaultVariant?.allowBackorder ?? false;
+    defaultVariant?.allowBackorder ?? product.allowBackorder ?? false;
 
   const isOutOfStock = effectiveStock <= 0 && !effectiveAllowBackorder;
   const isBackorder = effectiveStock <= 0 && effectiveAllowBackorder;
