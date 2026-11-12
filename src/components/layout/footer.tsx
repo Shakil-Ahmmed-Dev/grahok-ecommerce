@@ -9,17 +9,19 @@ export function Footer() {
       <div className="border-b border-white/10 py-10">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-            <div className="flex items-start gap-4">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white">
+            <Link href="/shipping" className="flex items-start gap-4 group">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white group-hover:bg-[var(--brand-mint)]/20 transition-colors">
                 <Truck className="size-5 text-[var(--brand-mint)]" />
               </div>
               <div>
-                <h4 className="font-semibold text-sm text-white">Nationwide Delivery</h4>
+                <h4 className="font-semibold text-sm text-white group-hover:text-[var(--brand-mint)] transition-colors">
+                  Nationwide Delivery
+                </h4>
                 <p className="text-xs text-white/70 mt-1 leading-relaxed">
                   Carefully packed doorstep fulfillment across all 64 districts.
                 </p>
               </div>
-            </div>
+            </Link>
 
             <div className="flex items-start gap-4">
               <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white">
@@ -33,29 +35,33 @@ export function Footer() {
               </div>
             </div>
 
-            <div className="flex items-start gap-4">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white">
+            <Link href="/returns" className="flex items-start gap-4 group">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white group-hover:bg-[var(--brand-mint)]/20 transition-colors">
                 <RotateCcw className="size-5 text-[var(--brand-mint)]" />
               </div>
               <div>
-                <h4 className="font-semibold text-sm text-white">7-Day Return Assurance</h4>
+                <h4 className="font-semibold text-sm text-white group-hover:text-[var(--brand-mint)] transition-colors">
+                  7-Day Return Assurance
+                </h4>
                 <p className="text-xs text-white/70 mt-1 leading-relaxed">
                   Hassle-free replacements and returns for complete peace of mind.
                 </p>
               </div>
-            </div>
+            </Link>
 
-            <div className="flex items-start gap-4">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white">
+            <a href="tel:+8801700000000" className="flex items-start gap-4 group">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white group-hover:bg-[var(--brand-mint)]/20 transition-colors">
                 <Headphones className="size-5 text-[var(--brand-mint)]" />
               </div>
               <div>
-                <h4 className="font-semibold text-sm text-white">Concierge Support</h4>
+                <h4 className="font-semibold text-sm text-white group-hover:text-[var(--brand-mint)] transition-colors">
+                  Concierge Support
+                </h4>
                 <p className="text-xs text-white/70 mt-1 leading-relaxed">
                   Our dedicated customer care team is available daily for orders and advice.
                 </p>
               </div>
-            </div>
+            </a>
           </div>
         </div>
       </div>
@@ -94,6 +100,11 @@ export function Footer() {
               <li>
                 <Link href="/products" className="hover:text-white transition-colors">
                   Full Catalog
+                </Link>
+              </li>
+              <li>
+                <Link href="/categories" className="hover:text-white transition-colors">
+                  Categories Directory
                 </Link>
               </li>
               <li>
@@ -150,19 +161,25 @@ export function Footer() {
             </h4>
             <ul className="flex flex-col gap-2.5 text-xs text-white/70">
               <li>
-                <Link href="/account/privacy" className="hover:text-white transition-colors flex items-center gap-1">
-                  <span>Privacy Policy</span>
-                  <ArrowUpRight className="size-3 text-white/40" />
+                <Link href="/shipping" className="hover:text-white transition-colors">
+                  Shipping & Delivery
                 </Link>
               </li>
               <li>
-                <span className="text-white/80">Encrypted 256-bit Checkout</span>
+                <Link href="/returns" className="hover:text-white transition-colors">
+                  Returns & Replacements
+                </Link>
               </li>
               <li>
-                <span className="text-white/80">Cash on Delivery Available</span>
+                <Link href="/privacy" className="hover:text-white transition-colors">
+                  Privacy Policy
+                </Link>
               </li>
               <li>
-                <span className="text-white/80">Quality Guaranteed</span>
+                <Link href="/account/privacy" className="hover:text-white transition-colors flex items-center gap-1">
+                  <span>Data Governance</span>
+                  <ArrowUpRight className="size-3 text-white/40" />
+                </Link>
               </li>
             </ul>
           </div>

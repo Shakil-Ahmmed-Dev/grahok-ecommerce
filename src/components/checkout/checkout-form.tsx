@@ -16,12 +16,14 @@ import { FieldGroup, Field, FieldLabel, FieldError, FieldDescription } from "@/c
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Empty } from "@/components/ui/empty";
+import { Badge } from "@/components/ui/badge";
 import { ProductImage } from "@/components/ui/product-image";
 import { PaymentMethodSelector } from "./payment-method-selector";
 import { useCart } from "@/context/cart-context";
 import { useSession } from "@/lib/better-auth/client";
 import { formatCurrencyBDT } from "@/lib/utils";
 import { PAYMENT_GATEWAY_REGISTRY, type PaymentMethodId } from "@/features/checkout/payment-registry";
+import type { TCustomerAddressDTO } from "@/features/customers/types";
 
 interface EstimateData {
   subtotal: number;
@@ -54,6 +56,11 @@ export function CheckoutForm() {
   const [saveAddress, setSaveAddress] = React.useState(false);
   const [notes, setNotes] = React.useState("");
 
+  // Saved Addresses State (Authenticated Customers)
+  const [savedAddresses, setSavedAddresses] = React.useState<TCustomerAddressDTO[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = React.useState<string | "new">("new");
+  const [loadingAddresses, setLoadingAddresses] = React.useState(false);
+
   // Payment Method
   const [paymentMethod, setPaymentMethod] = React.useState<PaymentMethodId>("cod");
 
@@ -81,6 +88,37 @@ export function CheckoutForm() {
     return () => clearTimeout(timer);
   }, [session, email, recipientName, firstName, lastName]);
 
+  // Fetch saved customer addresses
+  React.useEffect(() => {
+    if (!session?.user) return;
+    let isCancelled = false;
+
+    async function loadSavedAddresses() {
+      setLoadingAddresses(true);
+      try {
+        const res = await fetch("/api/v1/customers/me/addresses");
+        if (res.ok) {
+          const data: TCustomerAddressDTO[] = await res.json();
+          if (!isCancelled && Array.isArray(data) && data.length > 0) {
+            setSavedAddresses(data);
+            const defaultAddress = data.find((a) => a.isDefaultShipping) || data[0];
+            setSelectedAddressId(defaultAddress.id);
+          }
+        }
+      } catch {
+        // Fallback to manual address input
+      } finally {
+        if (!isCancelled) setLoadingAddresses(false);
+      }
+    }
+
+    loadSavedAddresses();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [session]);
+
   // Combined E.164 phone string (strict Bangladeshi mobile normalization)
   const fullPhone = React.useMemo(() => {
     let clean = phoneNumber.trim().replace(/[\s\-\(\)]/g, "");
@@ -102,16 +140,29 @@ export function CheckoutForm() {
     const timer = setTimeout(async () => {
       setIsEstimating(true);
       try {
+        const activeSaved = savedAddresses.find((a) => a.id === selectedAddressId);
+        const shippingAddressPayload = activeSaved
+          ? {
+              recipientName: activeSaved.recipientName,
+              phone: activeSaved.phone,
+              addressLine1: activeSaved.addressLine1,
+              addressLine2: activeSaved.addressLine2 || undefined,
+              city: activeSaved.city,
+              postalCode: activeSaved.postalCode,
+              countryCode: "BD",
+            }
+          : {
+              recipientName: recipientName.trim() || "Customer",
+              phone: fullPhone.length >= 10 ? fullPhone : "+8801700000000",
+              addressLine1: addressLine1.trim() || "Bangladesh",
+              city: city.trim() || "Dhaka",
+              postalCode: postalCode.trim() || "1000",
+              countryCode: "BD",
+            };
+
         const payload = {
           items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
-          shippingAddress: {
-            recipientName: recipientName.trim() || "Customer",
-            phone: fullPhone.length >= 10 ? fullPhone : "+8801700000000",
-            addressLine1: addressLine1.trim() || "Bangladesh",
-            city: city.trim() || "Dhaka",
-            postalCode: postalCode.trim() || "1000",
-            countryCode: "BD",
-          },
+          shippingAddress: shippingAddressPayload,
         };
 
         const res = await fetch("/api/v1/checkout/estimate", {
@@ -135,7 +186,17 @@ export function CheckoutForm() {
       isCancelled = true;
       clearTimeout(timer);
     };
-  }, [items, recipientName, fullPhone, addressLine1, city, postalCode, isMounted]);
+  }, [
+    items,
+    recipientName,
+    fullPhone,
+    addressLine1,
+    city,
+    postalCode,
+    isMounted,
+    selectedAddressId,
+    savedAddresses,
+  ]);
 
   const validate = () => {
     const errs: Record<string, string> = {};
@@ -144,26 +205,33 @@ export function CheckoutForm() {
       errs.email = "Please provide a valid email address";
     }
 
-    if (!recipientName.trim()) {
-      errs.recipientName = "Full recipient name is required";
-    }
+    if (selectedAddressId === "new") {
+      if (!recipientName.trim()) {
+        errs.recipientName = "Full recipient name is required";
+      }
 
-    if (!phoneNumber.trim()) {
-      errs.phoneNumber = "Phone number is required";
-    } else if (!/^\+8801[3-9]\d{8}$/.test(fullPhone)) {
-      errs.phoneNumber = "Please enter a valid 11-digit Bangladeshi mobile number (e.g. 01712345678)";
-    }
+      if (!phoneNumber.trim()) {
+        errs.phoneNumber = "Phone number is required";
+      } else if (!/^\+8801[3-9]\d{8}$/.test(fullPhone)) {
+        errs.phoneNumber = "Please enter a valid 11-digit Bangladeshi mobile number (e.g. 01712345678)";
+      }
 
-    if (!addressLine1.trim()) {
-      errs.addressLine1 = "Street address is required";
-    }
+      if (!addressLine1.trim()) {
+        errs.addressLine1 = "Street address is required";
+      }
 
-    if (!city.trim()) {
-      errs.city = "City / District is required";
-    }
+      if (!city.trim()) {
+        errs.city = "City / District is required";
+      }
 
-    if (!postalCode.trim()) {
-      errs.postalCode = "Postal code is required";
+      if (!postalCode.trim()) {
+        errs.postalCode = "Postal code is required";
+      }
+    } else {
+      const exists = savedAddresses.some((a) => a.id === selectedAddressId);
+      if (!exists) {
+        errs.selectedAddress = "Please select a valid delivery address or enter a new one";
+      }
     }
 
     setErrors(errs);
@@ -191,19 +259,24 @@ export function CheckoutForm() {
     setIsSubmitting(true);
 
     try {
+      const shippingAddress =
+        selectedAddressId !== "new"
+          ? { addressId: selectedAddressId }
+          : {
+              recipientName: recipientName.trim(),
+              phone: fullPhone,
+              addressLine1: addressLine1.trim(),
+              addressLine2: addressLine2.trim() || undefined,
+              city: city.trim(),
+              postalCode: postalCode.trim(),
+              countryCode: "BD",
+            };
+
       const payload = {
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
-        shippingAddress: {
-          recipientName: recipientName.trim(),
-          phone: fullPhone,
-          addressLine1: addressLine1.trim(),
-          addressLine2: addressLine2.trim() || undefined,
-          city: city.trim(),
-          postalCode: postalCode.trim(),
-          countryCode: "BD",
-        },
+        shippingAddress,
         paymentMethod: (PAYMENT_GATEWAY_REGISTRY.find((m) => m.id === paymentMethod)?.backendPaymentMethod ?? "cod") as "cod",
-        saveShippingAddress: saveAddress,
+        saveShippingAddress: selectedAddressId === "new" ? saveAddress : false,
         customer: session?.user
           ? undefined
           : {
@@ -358,119 +431,202 @@ export function CheckoutForm() {
 
         {/* Step 2: Shipping Address */}
         <section className="flex flex-col gap-4">
-          <div className="flex items-center gap-2.5 pb-3 border-b border-[var(--border)]">
-            <div className="size-6 rounded-full bg-[var(--brand-green)] text-white text-xs font-bold flex items-center justify-center">
-              2
+          <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+            <div className="flex items-center gap-2.5">
+              <div className="size-6 rounded-full bg-[var(--brand-green)] text-white text-xs font-bold flex items-center justify-center">
+                2
+              </div>
+              <h2 className="text-base font-bold text-[var(--brand-green)]">Shipping Address</h2>
             </div>
-            <h2 className="text-base font-bold text-[var(--brand-green)]">Shipping Address</h2>
+            {savedAddresses.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setSelectedAddressId((prev) =>
+                    prev === "new" ? savedAddresses[0].id : "new"
+                  )
+                }
+                className="text-xs text-[var(--brand-accent)] hover:text-[var(--brand-green)]"
+              >
+                {selectedAddressId === "new"
+                  ? "← Select Saved Address"
+                  : "+ Deliver to New Address"}
+              </Button>
+            )}
           </div>
 
-          <FieldGroup>
-            <Field invalid={Boolean(errors.recipientName)}>
-              <FieldLabel required>Recipient Full Name</FieldLabel>
-              <Input
-                placeholder="John Doe"
-                value={recipientName}
-                onChange={(e) => setRecipientName(e.target.value)}
-                aria-invalid={Boolean(errors.recipientName)}
-              />
-              <FieldError message={errors.recipientName} />
-            </Field>
-
-            <Field invalid={Boolean(errors.phoneNumber)}>
-              <FieldLabel required>Phone Number (for Courier & SMS)</FieldLabel>
-              <div className="flex gap-2">
-                <div className="flex items-center justify-center px-3.5 rounded-lg border border-[var(--input)] bg-[var(--brand-ceramic)] text-xs font-bold text-[rgba(0,0,0,0.87)] select-none">
-                  +880
+          {loadingAddresses ? (
+            <div className="py-6 flex items-center justify-center gap-2 text-xs text-[rgba(0,0,0,0.58)]">
+              <Spinner className="size-4 text-[var(--brand-accent)]" />
+              <span>Loading saved addresses...</span>
+            </div>
+          ) : savedAddresses.length > 0 && selectedAddressId !== "new" ? (
+            <div className="flex flex-col gap-3">
+              {errors.selectedAddress && (
+                <div className="rounded-lg bg-red-50 p-3 text-xs text-[var(--destructive)]">
+                  {errors.selectedAddress}
                 </div>
-                <Input
-                  type="tel"
-                  placeholder="1712345678"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  aria-invalid={Boolean(errors.phoneNumber)}
-                  className="flex-1 tabular-nums"
-                />
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {savedAddresses.map((addr) => {
+                  const isSelected = selectedAddressId === addr.id;
+                  return (
+                    <div
+                      key={addr.id}
+                      onClick={() => setSelectedAddressId(addr.id)}
+                      className={`cursor-pointer rounded-xl border p-4 text-xs flex flex-col justify-between gap-3 transition-all ${
+                        isSelected
+                          ? "border-[var(--brand-green)] bg-[var(--brand-mint)]/10 ring-2 ring-[var(--brand-green)]/20 shadow-xs"
+                          : "border-[var(--border)] bg-white hover:border-[var(--brand-green)]/50"
+                      }`}
+                    >
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-sm text-[var(--brand-green)]">
+                            {addr.recipientName}
+                          </span>
+                          {addr.isDefaultShipping && (
+                            <Badge variant="inStock" className="text-[10px] py-0 px-1.5">
+                              Default
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-[rgba(0,0,0,0.7)] leading-relaxed">
+                          {addr.addressLine1}
+                          {addr.addressLine2 ? `, ${addr.addressLine2}` : ""}
+                        </p>
+                        <p className="text-[rgba(0,0,0,0.6)]">
+                          {addr.city}, {addr.postalCode} &middot; Bangladesh
+                        </p>
+                        <p className="text-[rgba(0,0,0,0.6)] font-mono tabular-nums mt-0.5">
+                          {addr.phone}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)] text-[11px] font-semibold text-[var(--brand-accent)]">
+                        <input
+                          type="radio"
+                          name="selectedAddress"
+                          checked={isSelected}
+                          onChange={() => setSelectedAddressId(addr.id)}
+                          className="size-3.5 text-[var(--brand-green)] accent-[var(--brand-green)]"
+                        />
+                        <span>{isSelected ? "Delivering to this address" : "Select this address"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <FieldDescription>
-                Required for nationwide courier delivery verification upon arrival.
-              </FieldDescription>
-              <FieldError message={errors.phoneNumber} />
-            </Field>
-
-            <Field invalid={Boolean(errors.addressLine1)}>
-              <FieldLabel required>Street Address & House / Flat</FieldLabel>
-              <Input
-                placeholder="House 12, Road 4, Sector 3, Uttara"
-                value={addressLine1}
-                onChange={(e) => setAddressLine1(e.target.value)}
-                aria-invalid={Boolean(errors.addressLine1)}
-              />
-              <FieldError message={errors.addressLine1} />
-            </Field>
-
-            <Field>
-              <FieldLabel>Apartment, suite, unit (optional)</FieldLabel>
-              <Input
-                placeholder="Apt 4B"
-                value={addressLine2}
-                onChange={(e) => setAddressLine2(e.target.value)}
-              />
-            </Field>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Field invalid={Boolean(errors.city)}>
-                <FieldLabel required>City / District</FieldLabel>
+            </div>
+          ) : (
+            <FieldGroup>
+              <Field invalid={Boolean(errors.recipientName)}>
+                <FieldLabel required>Recipient Full Name</FieldLabel>
                 <Input
-                  placeholder="Dhaka"
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  aria-invalid={Boolean(errors.city)}
+                  placeholder="John Doe"
+                  value={recipientName}
+                  onChange={(e) => setRecipientName(e.target.value)}
+                  aria-invalid={Boolean(errors.recipientName)}
                 />
-                <FieldError message={errors.city} />
+                <FieldError message={errors.recipientName} />
               </Field>
 
-              <Field invalid={Boolean(errors.postalCode)}>
-                <FieldLabel required>Postal Code</FieldLabel>
+              <Field invalid={Boolean(errors.phoneNumber)}>
+                <FieldLabel required>Phone Number (for Courier & SMS)</FieldLabel>
+                <div className="flex gap-2">
+                  <div className="flex items-center justify-center px-3.5 rounded-lg border border-[var(--input)] bg-[var(--brand-ceramic)] text-xs font-bold text-[rgba(0,0,0,0.87)] select-none">
+                    +880
+                  </div>
+                  <Input
+                    type="tel"
+                    placeholder="1712345678"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    aria-invalid={Boolean(errors.phoneNumber)}
+                    className="flex-1 tabular-nums"
+                  />
+                </div>
+                <FieldDescription>
+                  Required for nationwide courier delivery verification upon arrival.
+                </FieldDescription>
+                <FieldError message={errors.phoneNumber} />
+              </Field>
+
+              <Field invalid={Boolean(errors.addressLine1)}>
+                <FieldLabel required>Street Address & House / Flat</FieldLabel>
                 <Input
-                  placeholder="1230"
-                  value={postalCode}
-                  onChange={(e) => setPostalCode(e.target.value)}
-                  aria-invalid={Boolean(errors.postalCode)}
-                  className="tabular-nums"
+                  placeholder="House 12, Road 4, Sector 3, Uttara"
+                  value={addressLine1}
+                  onChange={(e) => setAddressLine1(e.target.value)}
+                  aria-invalid={Boolean(errors.addressLine1)}
                 />
-                <FieldError message={errors.postalCode} />
+                <FieldError message={errors.addressLine1} />
               </Field>
 
               <Field>
-                <FieldLabel required>Country</FieldLabel>
-                <div className="h-10 flex items-center px-3.5 rounded-lg border border-[var(--input)] bg-[var(--brand-ceramic)] text-xs font-semibold text-[rgba(0,0,0,0.87)]">
-                  Bangladesh (BD)
-                </div>
-              </Field>
-            </div>
-
-            {session?.user && (
-              <label className="flex items-center gap-2 pt-2 text-xs font-semibold text-[rgba(0,0,0,0.87)] cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={saveAddress}
-                  onChange={(e) => setSaveAddress(e.target.checked)}
-                  className="size-4 rounded accent-[var(--brand-accent)] cursor-pointer"
+                <FieldLabel>Apartment, suite, unit (optional)</FieldLabel>
+                <Input
+                  placeholder="Apt 4B"
+                  value={addressLine2}
+                  onChange={(e) => setAddressLine2(e.target.value)}
                 />
-                <span>Save this address to my account address book</span>
-              </label>
-            )}
+              </Field>
 
-            <Field>
-              <FieldLabel>Delivery Instructions or Notes (optional)</FieldLabel>
-              <Input
-                placeholder="e.g. Call upon arrival or leave with security"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
-            </Field>
-          </FieldGroup>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Field invalid={Boolean(errors.city)}>
+                  <FieldLabel required>City / District</FieldLabel>
+                  <Input
+                    placeholder="Dhaka"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    aria-invalid={Boolean(errors.city)}
+                  />
+                  <FieldError message={errors.city} />
+                </Field>
+
+                <Field invalid={Boolean(errors.postalCode)}>
+                  <FieldLabel required>Postal Code</FieldLabel>
+                  <Input
+                    placeholder="1230"
+                    value={postalCode}
+                    onChange={(e) => setPostalCode(e.target.value)}
+                    aria-invalid={Boolean(errors.postalCode)}
+                    className="tabular-nums"
+                  />
+                  <FieldError message={errors.postalCode} />
+                </Field>
+
+                <Field>
+                  <FieldLabel required>Country</FieldLabel>
+                  <div className="h-10 flex items-center px-3.5 rounded-lg border border-[var(--input)] bg-[var(--brand-ceramic)] text-xs font-semibold text-[rgba(0,0,0,0.87)]">
+                    Bangladesh (BD)
+                  </div>
+                </Field>
+              </div>
+
+              {session?.user && (
+                <label className="flex items-center gap-2 pt-2 text-xs font-semibold text-[rgba(0,0,0,0.87)] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={saveAddress}
+                    onChange={(e) => setSaveAddress(e.target.checked)}
+                    className="size-4 rounded accent-[var(--brand-accent)] cursor-pointer"
+                  />
+                  <span>Save this address to my account address book</span>
+                </label>
+              )}
+            </FieldGroup>
+          )}
+
+          <Field>
+            <FieldLabel>Delivery Instructions or Notes (optional)</FieldLabel>
+            <Input
+              placeholder="e.g. Call upon arrival or leave with security"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </Field>
         </section>
 
         {/* Step 3: Payment Method Selector */}

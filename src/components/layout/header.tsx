@@ -80,6 +80,13 @@ export function Header({ categories = [] }: HeaderProps) {
                   >
                     All Catalog
                   </Link>
+                  <Link
+                    href="/categories"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="text-base font-semibold text-[rgba(0,0,0,0.87)] hover:text-[var(--brand-accent)] transition-colors py-1.5"
+                  >
+                    All Categories
+                  </Link>
 
                   {topCategories.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-[var(--border)] flex flex-col gap-2">
@@ -152,6 +159,16 @@ export function Header({ categories = [] }: HeaderProps) {
               }`}
             >
               Catalog
+            </Link>
+            <Link
+              href="/categories"
+              className={`transition-colors hover:text-[var(--brand-accent)] ${
+                pathname === "/categories"
+                  ? "text-[var(--brand-green)] border-b-2 border-[var(--brand-green)] pb-0.5"
+                  : "text-[rgba(0,0,0,0.87)]"
+              }`}
+            >
+              Categories
             </Link>
             {topCategories.map((cat) => (
               <Link
