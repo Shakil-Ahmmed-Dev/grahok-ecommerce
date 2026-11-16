@@ -18,6 +18,8 @@ import {
 import { normalizeVariantSignature } from "@/features/products/matrix";
 import { syncProductAggregateReadModel } from "@/features/products/actions";
 import { eq } from "drizzle-orm";
+import { auth } from "@/lib/better-auth/auth";
+import { user } from "./schemas/auth";
 
 interface SeedProductItem extends Omit<TCreateProductInput, "categoryIds" | "primaryCategoryId"> {
     categorySlug: string;
@@ -877,7 +879,30 @@ const seedOrderStatuses: SeedOrderStatus[] = [
     },
 ];
 
+const seedAdmin = {
+    name: "Shakil Ahmmed",
+    email: "shakilahmmedwakil.saw@gmail.com",
+    password: "tuigadha",
+};
+
 async function seed() {
+    console.log("Ensuring admin account...");
+    const existingAdmin = await db.query.user.findFirst({
+        where: (u, { eq }) => eq(u.email, seedAdmin.email),
+    });
+
+    const adminUserId = existingAdmin
+        ? existingAdmin.id
+        : (await auth.api.signUpEmail({
+            body: seedAdmin,
+        })).user.id;
+
+    await db.update(user)
+        .set({ role: "admin" })
+        .where(eq(user.id, adminUserId));
+
+    console.log(`Ensured admin account for ${seedAdmin.email}.`);
+
     console.log("Seeding baseline order statuses...");
     for (const status of seedOrderStatuses) {
         await db.insert(orderStatusesTable)
